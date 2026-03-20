@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clock Manager</title>
+  <style>
+    :root {
+      --bg: #f3efe4;
+      --paper: rgba(255, 252, 246, 0.92);
+      --line: #cbbda8;
+      --ink: #2f2418;
+      --muted: #746452;
+      --accent: #af4f2d;
+      --accent-soft: #e7c4a9;
+      --danger: #8e2f2b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background: radial-gradient(circle at top left, rgba(255,255,255,0.8), transparent 36%), linear-gradient(160deg, #efe2cd 0%, #d7c1a0 45%, #b3835d 100%);
+      padding: 24px;
+    }
+
+    .shell {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+
+    .panel {
+      background: var(--paper);
+      border: 1px solid rgba(104, 77, 44, 0.18);
+      border-radius: 22px;
+      padding: 20px;
+      box-shadow: 0 20px 60px rgba(64, 41, 13, 0.12);
+      backdrop-filter: blur(10px);
+    }
+
+    h1, h2, h3 {
+      margin: 0 0 12px;
+      font-weight: 600;
+    }
+
+    .intro,
+    .stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .intro p,
+    .hint,
+    .meta,
+    .field-note {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .toolbar,
+    .toggles,
+    .upload-row,
+    .field-row,
+    .button-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .field-row > * {
+      flex: 1 1 220px;
+    }
+
+    .upload-row input[type="file"] {
+      flex: 1 1 280px;
+    }
+
+    button,
+    select,
+    input[type="file"],
+    input[type="text"],
+    input[type="number"] {
+      font: inherit;
+      border-radius: 14px;
+      padding: 11px 14px;
+      border: 1px solid var(--line);
+      background: #fffdf8;
+      color: var(--ink);
+    }
+
+    button {
+      cursor: pointer;
+      background: linear-gradient(135deg, #ad5a2d, #cf8453);
+      color: #fff;
+      border: 0;
+      font-weight: 600;
+      flex: 0 0 auto;
+    }
+
+    button.secondary {
+      background: #f7efe3;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    button.danger {
+      background: #fff2ee;
+      color: var(--danger);
+      border: 1px solid rgba(142, 47, 43, 0.25);
+    }
+
+    .gallery,
+    .list-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .card,
+    .mini-card {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.72);
+      border: 1px solid rgba(108, 81, 45, 0.12);
+    }
+
+    .card.is-default {
+      outline: 3px solid var(--accent-soft);
+      background: rgba(255, 248, 238, 0.96);
+    }
+
+    .thumb {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      object-fit: cover;
+      border-radius: 14px;
+      background: #1f1308;
+    }
+
+    .card-title,
+    .mini-title {
+      font-size: 1rem;
+      overflow-wrap: anywhere;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: #f4e6d7;
+      color: #6d5139;
+      padding: 5px 9px;
+      font-size: 0.85rem;
+    }
+
+    .empty {
+      padding: 20px;
+      border-radius: 18px;
+      border: 1px dashed rgba(80, 51, 19, 0.28);
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .mode-panel {
+      border: 1px solid rgba(104, 77, 44, 0.16);
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(255,255,255,0.55);
+      display: grid;
+      gap: 12px;
+    }
+
+    .mode-panel[hidden] {
+      display: none;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+      .split { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      body { padding: 16px; }
+      .panel { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="panel intro">
+      <h1>Clock Portal</h1>
+      <p>Manage the Pi display over Wi-Fi. Upload photos, switch display modes, and configure location-aware airport board clocks.</p>
+      <p class="hint">For airport-board mode, set one home location and up to six destinations. Country is used to narrow city search.</p>
+    </section>
+
+    <section class="panel stack">
+      <h2>Display Mode</h2>
+      <div class="field-row">
+        <select id="displayMode"></select>
+        <button id="saveSettings" type="button">Save Display Settings</button>
+      </div>
+      <div class="toggles">
+        <label><input id="showAnalog" type="checkbox" checked /> Show analog clock</label>
+        <label><input id="mode24" type="checkbox" checked /> 24 hour clock</label>
+      </div>
+      <div id="graphicPanel" class="mode-panel">
+        <h3>Graphic Screen Type</h3>
+        <p class="field-note">Use the image library below to pick the background for the graphic clock mode.</p>
+      </div>
+      <div id="worldPanel" class="mode-panel" hidden>
+        <h3>World Daylight Map</h3>
+        <p class="field-note">This mode uses the bundled map asset and overlays daylight shading in UTC.</p>
+      </div>
+      <div id="airportPanel" class="mode-panel" hidden>
+        <h3>Airport Board</h3>
+        <div class="split">
+          <div class="stack">
+            <h3>Home Location</h3>
+            <div class="field-row">
+              <select id="homeLocationSelect"></select>
+              <button id="applyHomeLocation" type="button">Use Selected Home</button>
+              <button id="clearHomeLocation" type="button" class="secondary">Clear Home</button>
+            </div>
+            <p id="homeLocationStatus" class="field-note">No home location saved yet.</p>
+          </div>
+          <div class="stack">
+            <h3>Add Custom Place</h3>
+            <div class="field-row">
+              <input id="customLabel" type="text" placeholder="Label e.g. Home" />
+              <input id="customCity" type="text" placeholder="City e.g. Washougal" />
+              <input id="customCountry" type="text" placeholder="Country e.g. USA" />
+            </div>
+            <div class="field-row">
+              <input id="customTimezone" type="text" placeholder="Timezone e.g. America/Los_Angeles" />
+              <input id="customLat" type="number" step="any" placeholder="Latitude" />
+              <input id="customLon" type="number" step="any" placeholder="Longitude" />
+            </div>
+            <div class="button-row">
+              <button id="saveCustomPlace" type="button">Save Custom Place</button>
+            </div>
+          </div>
+        </div>
+        <div class="split">
+          <div class="stack">
+            <h3>Add Destination</h3>
+            <div class="field-row">
+              <select id="countryFilter"></select>
+              <select id="citySelect"></select>
+              <button id="addDestination" type="button">Add Destination</button>
+            </div>
+            <p class="field-note">Select up to six destinations. The display will show: City | Distance | Local Time.</p>
+          </div>
+          <div class="stack">
+            <h3>Selected Destinations</h3>
+            <div id="destinationList" class="list-grid"></div>
+          </div>
+        </div>
+        <div class="stack">
+          <h3>Saved Places</h3>
+          <div id="customPlacesList" class="list-grid"></div>
+        </div>
+      </div>
+      <p class="meta" id="statusText">Ready.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Upload Photos</h2>
+      <div class="upload-row">
+        <input id="photoInput" type="file" accept="image/gif,image/webp,image/png,image/jpeg,image/avif" multiple />
+        <button id="uploadButton" type="button">Upload to Device</button>
+      </div>
+      <p class="meta">Supported formats: GIF, WebP, PNG, JPG, JPEG, AVIF.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Graphic Mode Library</h2>
+      <div id="gallery" class="gallery"></div>
+    </section>
+  </div>
+  <script src="/manage.js"></script>
+</body>
+</html>

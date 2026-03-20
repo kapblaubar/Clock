@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+uploads/
+clock_state.json
+clock_config.json
+
+.DS_Store
+Thumbs.db

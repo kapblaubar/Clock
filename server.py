@@ -1,0 +1,315 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from uuid import uuid4
+
+from flask import Flask, abort, jsonify, redirect, request, send_from_directory
+
+
+BASE_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = BASE_DIR / "assets"
+UPLOADS_DIR = BASE_DIR / "uploads"
+STATE_PATH = BASE_DIR / "clock_state.json"
+CITIES_PATH = BASE_DIR / "cities.json"
+INDEX_PATH = BASE_DIR / "index.html"
+MANAGE_PATH = BASE_DIR / "manage.html"
+
+ALLOWED_EXTENSIONS = {".gif", ".webp", ".png", ".jpg", ".jpeg", ".avif"}
+DISPLAY_MODES = ["graphic", "world-daylight", "airport-board"]
+MAX_AIRPORT_DESTINATIONS = 6
+DEFAULT_STATE = {
+    "displayMode": "graphic",
+    "defaultPhoto": "assets/bg1.webp",
+    "showAnalog": True,
+    "mode24": True,
+    "rotation": "portrait",
+    "airportDestinations": ["nyc-us"],
+    "homeLocation": None,
+    "customPlaces": [],
+}
+
+app = Flask(__name__)
+
+
+def ensure_state() -> None:
+    UPLOADS_DIR.mkdir(exist_ok=True)
+    if not STATE_PATH.exists():
+        STATE_PATH.write_text(json.dumps(DEFAULT_STATE, indent=2), encoding="utf-8")
+
+
+def load_cities() -> list[dict]:
+    return json.loads(CITIES_PATH.read_text(encoding="utf-8"))
+
+
+def city_exists(city_id: str) -> bool:
+    return any(city["id"] == city_id for city in load_cities())
+
+
+def load_state() -> dict:
+    ensure_state()
+    try:
+        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        data = {}
+    state = DEFAULT_STATE.copy()
+    state.update(data)
+    if state.get("displayMode") not in DISPLAY_MODES:
+        state["displayMode"] = DEFAULT_STATE["displayMode"]
+    state["airportDestinations"] = [
+        destination for destination in list(state.get("airportDestinations") or [])[:MAX_AIRPORT_DESTINATIONS]
+        if isinstance(destination, str) and city_exists(destination)
+    ] or DEFAULT_STATE["airportDestinations"][:]
+    state["customPlaces"] = [place for place in state.get("customPlaces") or [] if isinstance(place, dict)]
+    state["homeLocation"] = normalize_home_location(state.get("homeLocation"))
+    return state
+
+
+def save_state(state: dict) -> None:
+    STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def safe_filename(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-")
+    return cleaned or f"upload-{uuid4().hex}.bin"
+
+
+def classify_photo(path: Path, root: Path, source: str) -> dict:
+    relative = path.relative_to(root).as_posix()
+    url = f"/{relative}?v={int(path.stat().st_mtime)}"
+    return {
+        "name": path.name,
+        "path": relative,
+        "url": url,
+        "source": source,
+        "size": path.stat().st_size,
+    }
+
+
+def list_photos() -> list[dict]:
+    items: list[dict] = []
+    if ASSETS_DIR.exists():
+        for path in sorted(ASSETS_DIR.iterdir()):
+            if path.is_file() and path.suffix.lower() in ALLOWED_EXTENSIONS:
+                items.append(classify_photo(path, BASE_DIR, "assets"))
+    if UPLOADS_DIR.exists():
+        for path in sorted(UPLOADS_DIR.iterdir()):
+            if path.is_file() and path.suffix.lower() in ALLOWED_EXTENSIONS:
+                items.append(classify_photo(path, BASE_DIR, "upload"))
+    return items
+
+
+def photo_exists(photo_path: str) -> bool:
+    candidate = (BASE_DIR / photo_path).resolve()
+    try:
+        candidate.relative_to(BASE_DIR.resolve())
+    except ValueError:
+        return False
+    return candidate.exists() and candidate.is_file()
+
+
+def normalize_home_location(value):
+    if not isinstance(value, dict):
+        return None
+    try:
+        return {
+            "label": str(value.get("label") or "Home").strip() or "Home",
+            "city": str(value.get("city") or "").strip(),
+            "country": str(value.get("country") or "").strip(),
+            "timezone": str(value.get("timezone") or "").strip(),
+            "lat": float(value["lat"]),
+            "lon": float(value["lon"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def normalize_custom_place(place: dict):
+    try:
+        return {
+            "id": str(place.get("id") or f"custom-{uuid4().hex[:8]}"),
+            "label": str(place.get("label") or "Custom place").strip(),
+            "city": str(place.get("city") or "").strip(),
+            "country": str(place.get("country") or "").strip(),
+            "timezone": str(place.get("timezone") or "UTC").strip() or "UTC",
+            "lat": float(place["lat"]),
+            "lon": float(place["lon"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+@app.get("/")
+def home():
+    return redirect("/manage")
+
+
+@app.get("/display")
+def display_page():
+    return INDEX_PATH.read_text(encoding="utf-8")
+
+
+@app.get("/manage")
+def manage_page():
+    return MANAGE_PATH.read_text(encoding="utf-8")
+
+
+@app.get("/app.js")
+def app_js():
+    return send_from_directory(BASE_DIR, "app.js", mimetype="application/javascript")
+
+
+@app.get("/manage.js")
+def manage_js():
+    return send_from_directory(BASE_DIR, "manage.js", mimetype="application/javascript")
+
+
+@app.get("/api/state")
+def api_state():
+    state = load_state()
+    photos = list_photos()
+    if not any(item["path"] == state["defaultPhoto"] for item in photos) and photos:
+        state["defaultPhoto"] = photos[0]["path"]
+        save_state(state)
+    return jsonify({
+        "state": state,
+        "photos": photos,
+        "cities": load_cities(),
+        "displayModes": DISPLAY_MODES,
+        "maxAirportDestinations": MAX_AIRPORT_DESTINATIONS,
+    })
+
+
+@app.post("/api/state")
+def update_state():
+    payload = request.get_json(silent=True) or {}
+    state = load_state()
+
+    if "displayMode" in payload:
+        mode = str(payload["displayMode"])
+        if mode not in DISPLAY_MODES:
+            return jsonify({"error": "Unsupported display mode"}), 400
+        state["displayMode"] = mode
+
+    if "defaultPhoto" in payload:
+        value = str(payload["defaultPhoto"])
+        if not photo_exists(value):
+            return jsonify({"error": "Photo not found"}), 404
+        state["defaultPhoto"] = value
+
+    if "airportDestinations" in payload:
+        incoming = payload["airportDestinations"]
+        if not isinstance(incoming, list):
+            return jsonify({"error": "airportDestinations must be a list"}), 400
+        normalized = []
+        for item in incoming[:MAX_AIRPORT_DESTINATIONS]:
+            destination = str(item)
+            if not city_exists(destination):
+                return jsonify({"error": f"Destination not found: {destination}"}), 404
+            if destination not in normalized:
+                normalized.append(destination)
+        state["airportDestinations"] = normalized or DEFAULT_STATE["airportDestinations"][:]
+
+    if "homeLocation" in payload:
+        home = payload["homeLocation"]
+        if home in (None, ""):
+            state["homeLocation"] = None
+        else:
+            normalized_home = normalize_home_location(home)
+            if normalized_home is None:
+                return jsonify({"error": "Invalid home location"}), 400
+            state["homeLocation"] = normalized_home
+
+    if "customPlaces" in payload:
+        incoming_places = payload["customPlaces"]
+        if not isinstance(incoming_places, list):
+            return jsonify({"error": "customPlaces must be a list"}), 400
+        normalized_places = []
+        for place in incoming_places:
+            normalized_place = normalize_custom_place(place)
+            if normalized_place is None:
+                return jsonify({"error": "Invalid custom place"}), 400
+            normalized_places.append(normalized_place)
+        state["customPlaces"] = normalized_places
+
+    for field in ("showAnalog", "mode24"):
+        if field in payload:
+            state[field] = bool(payload[field])
+
+    save_state(state)
+    return jsonify({"state": state})
+
+
+@app.get("/api/photos")
+def api_photos():
+    return jsonify({"photos": list_photos(), "state": load_state()})
+
+
+@app.post("/api/photos")
+def upload_photos():
+    ensure_state()
+    files = request.files.getlist("photos")
+    if not files:
+        return jsonify({"error": "No files uploaded"}), 400
+
+    uploaded = []
+    for file in files:
+        if not file.filename:
+            continue
+        ext = Path(file.filename).suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            continue
+        target_name = safe_filename(Path(file.filename).stem) + ext
+        target_path = UPLOADS_DIR / target_name
+        if target_path.exists():
+            target_path = UPLOADS_DIR / f"{Path(target_name).stem}-{uuid4().hex[:6]}{ext}"
+        file.save(target_path)
+        uploaded.append(target_path.name)
+
+    if not uploaded:
+        return jsonify({"error": "No supported files uploaded"}), 400
+
+    state = load_state()
+    if not photo_exists(state.get("defaultPhoto", "")):
+        state["defaultPhoto"] = f"uploads/{uploaded[0]}"
+        save_state(state)
+
+    return jsonify({"uploaded": uploaded, "photos": list_photos(), "state": state})
+
+
+@app.delete("/api/photos/<path:photo_name>")
+def delete_photo(photo_name: str):
+    target = (UPLOADS_DIR / photo_name).resolve()
+    try:
+        target.relative_to(UPLOADS_DIR.resolve())
+    except ValueError:
+        abort(400)
+
+    if not target.exists() or not target.is_file():
+        abort(404)
+
+    target.unlink()
+
+    state = load_state()
+    if state.get("defaultPhoto") == f"uploads/{target.name}":
+        photos = list_photos()
+        state["defaultPhoto"] = photos[0]["path"] if photos else DEFAULT_STATE["defaultPhoto"]
+        save_state(state)
+
+    return jsonify({"deleted": target.name, "photos": list_photos(), "state": load_state()})
+
+
+@app.get("/assets/<path:filename>")
+def assets(filename: str):
+    return send_from_directory(ASSETS_DIR, filename)
+
+
+@app.get("/uploads/<path:filename>")
+def uploads(filename: str):
+    return send_from_directory(UPLOADS_DIR, filename)
+
+
+if __name__ == "__main__":
+    ensure_state()
+    app.run(host="0.0.0.0", port=8000)

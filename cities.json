@@ -1,0 +1,17 @@
+[
+  {"id": "nyc-us", "country": "United States", "city": "New York", "lat": 40.7128, "lon": -74.0060, "timezone": "America/New_York"},
+  {"id": "lax-us", "country": "United States", "city": "Los Angeles", "lat": 34.0522, "lon": -118.2437, "timezone": "America/Los_Angeles"},
+  {"id": "chi-us", "country": "United States", "city": "Chicago", "lat": 41.8781, "lon": -87.6298, "timezone": "America/Chicago"},
+  {"id": "lon-gb", "country": "United Kingdom", "city": "London", "lat": 51.5072, "lon": -0.1276, "timezone": "Europe/London"},
+  {"id": "par-fr", "country": "France", "city": "Paris", "lat": 48.8566, "lon": 2.3522, "timezone": "Europe/Paris"},
+  {"id": "ber-de", "country": "Germany", "city": "Berlin", "lat": 52.52, "lon": 13.405, "timezone": "Europe/Berlin"},
+  {"id": "tok-jp", "country": "Japan", "city": "Tokyo", "lat": 35.6762, "lon": 139.6503, "timezone": "Asia/Tokyo"},
+  {"id": "sin-sg", "country": "Singapore", "city": "Singapore", "lat": 1.3521, "lon": 103.8198, "timezone": "Asia/Singapore"},
+  {"id": "syd-au", "country": "Australia", "city": "Sydney", "lat": -33.8688, "lon": 151.2093, "timezone": "Australia/Sydney"},
+  {"id": "akl-nz", "country": "New Zealand", "city": "Auckland", "lat": -36.8509, "lon": 174.7645, "timezone": "Pacific/Auckland"},
+  {"id": "dub-ae", "country": "United Arab Emirates", "city": "Dubai", "lat": 25.2048, "lon": 55.2708, "timezone": "Asia/Dubai"},
+  {"id": "cpt-za", "country": "South Africa", "city": "Cape Town", "lat": -33.9249, "lon": 18.4241, "timezone": "Africa/Johannesburg"},
+  {"id": "gru-br", "country": "Brazil", "city": "Sao Paulo", "lat": -23.5505, "lon": -46.6333, "timezone": "America/Sao_Paulo"},
+  {"id": "mex-mx", "country": "Mexico", "city": "Mexico City", "lat": 19.4326, "lon": -99.1332, "timezone": "America/Mexico_City"},
+  {"id": "rey-is", "country": "Iceland", "city": "Reykjavik", "lat": 64.1466, "lon": -21.9426, "timezone": "Atlantic/Reykjavik"}
+]
