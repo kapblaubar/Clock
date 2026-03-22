@@ -26,5 +26,7 @@
   {"id": "nbo-ke", "country": "Kenya", "city": "Nairobi", "lat": -1.2921, "lon": 36.8219, "timezone": "Africa/Nairobi"},
   {"id": "cai-eg", "country": "Egypt", "city": "Cairo", "lat": 30.0444, "lon": 31.2357, "timezone": "Africa/Cairo"},
   {"id": "rak-ma", "country": "Morocco", "city": "Marrakesh", "lat": 31.6295, "lon": -7.9811, "timezone": "Africa/Casablanca"},
-  {"id": "ibz-es", "country": "Spain", "city": "Ibiza", "lat": 38.9067, "lon": 1.4206, "timezone": "Europe/Madrid"}
+  {"id": "ibz-es", "country": "Spain", "city": "Ibiza", "lat": 38.9067, "lon": 1.4206, "timezone": "Europe/Madrid"},
+  {"id": "del-in", "country": "India", "city": "Delhi", "lat": 28.6139, "lon": 77.2090, "timezone": "Asia/Kolkata"},
+  {"id": "blr-in", "country": "India", "city": "Bangalore", "lat": 12.9716, "lon": 77.5946, "timezone": "Asia/Kolkata"}
 ]

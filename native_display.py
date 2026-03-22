@@ -26,6 +26,17 @@ DEFAULT_STATE = {
     "mode24": True,
     "rotation": "portrait",
     "airportUnits": "imperial",
+    "wordClockLanguage": "english",
+    "wordClockStyle": "direct",
+    "wordClockFont": "classic-sans",
+    "lichtzeitpegelColors": {
+        "H": "amber",
+        "h": "amber",
+        "M": "amber",
+        "m": "amber",
+        "S": "amber",
+        "s": "amber",
+    },
     "airportDestinations": ["nyc-us"],
     "homeLocation": None,
     "customPlaces": [],
@@ -36,6 +47,25 @@ IDLE_FPS = 4
 WORLD_POLL_FPS = 2
 WEATHER_REFRESH_SECONDS = 900
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+AIRPORT_VISIBLE_ROWS = 5
+AIRPORT_ANIMATION_SECONDS = 10.0
+FLAP_GLYPHS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-/"
+HOME_WEATHER_ID = "__home__"
+LICHTZEITPEGEL_PALETTES = {
+    "amber": {"fill": (241, 183, 73), "edge": (255, 216, 132), "label": (238, 218, 166)},
+    "red": {"fill": (198, 78, 68), "edge": (230, 132, 120), "label": (248, 221, 216)},
+    "green": {"fill": (68, 156, 96), "edge": (128, 210, 148), "label": (221, 245, 228)},
+    "blue": {"fill": (70, 118, 198), "edge": (128, 172, 236), "label": (222, 232, 250)},
+    "purple": {"fill": (132, 84, 190), "edge": (182, 138, 228), "label": (239, 228, 250)},
+    "white": {"fill": (226, 226, 226), "edge": (255, 255, 255), "label": (255, 255, 255)},
+}
+WORD_CLOCK_FONT_FAMILIES = {
+    "classic-sans": ["FreeSans", "Liberation Sans", "Nimbus Sans", "DejaVu Sans"],
+    "serif-display": ["URW Bookman", "Liberation Serif", "Nimbus Roman", "FreeSerif"],
+    "cursive-italic": ["Z003", "URW Bookman", "Liberation Serif", "FreeSerif"],
+    "urw-gothic-demi": ["URW Gothic", "Nimbus Sans", "FreeSans", "Liberation Sans"],
+    "artsy-script": ["Z003", "URW Bookman", "P052", "FreeSerif"],
+}
 
 
 @dataclass
@@ -166,6 +196,15 @@ def selected_destination_cities(state: dict, cities: dict[str, dict]) -> list[di
         city = cities.get(destination_id)
         if city:
             selected.append(city)
+    home = state.get("homeLocation") or None
+    if home:
+        selected.append({
+            "id": HOME_WEATHER_ID,
+            "city": home.get("city", "Home"),
+            "lat": home["lat"],
+            "lon": home["lon"],
+            "timezone": home.get("timezone", ""),
+        })
     return selected
 
 
@@ -413,6 +452,102 @@ def format_weather(weather: WeatherSnapshot | None, airport_units: str) -> str:
     return f"{weather.temperature}{unit} {weather.summary.upper()}"
 
 
+def weather_style(weather: WeatherSnapshot | None) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    if not weather:
+        return (70, 64, 52), (255, 240, 196)
+    summary = weather.summary.lower()
+    if summary == "clear":
+        return (48, 128, 64), (255, 255, 255)
+    if summary == "cloudy":
+        return (55, 96, 160), (255, 255, 255)
+    if summary in {"rainy", "drizzle"}:
+        return (214, 164, 62), (24, 18, 10)
+    if summary == "snow":
+        return (184, 68, 60), (24, 18, 10)
+    return (70, 64, 52), (255, 240, 196)
+
+
+def destination_distance(home: dict | None, city: dict) -> float:
+    if not home:
+        return float("inf")
+    return haversine_miles(home["lat"], home["lon"], city["lat"], city["lon"])
+
+
+def sorted_destination_ids(state: dict, cities: dict[str, dict]) -> list[str]:
+    destination_ids = [destination_id for destination_id in state.get("airportDestinations") or [] if destination_id in cities]
+    home = state.get("homeLocation") or None
+    if not home:
+        return destination_ids
+    return sorted(destination_ids, key=lambda destination_id: (destination_distance(home, cities[destination_id]), cities[destination_id]["city"]))
+
+
+def visible_destination_ids(state: dict, cities: dict[str, dict], now: datetime) -> tuple[list[str], int, int]:
+    destination_ids = sorted_destination_ids(state, cities)
+    if not destination_ids:
+        return [], 0, 0
+    rotate_seconds = max(1, int(state.get("airportRotateSeconds", 60)))
+    total_pages = max(1, math.ceil(len(destination_ids) / AIRPORT_VISIBLE_ROWS))
+    page_index = int(now.timestamp() // rotate_seconds) % total_pages
+    start = page_index * AIRPORT_VISIBLE_ROWS
+    end = start + AIRPORT_VISIBLE_ROWS
+    return destination_ids[start:end], page_index, total_pages
+
+
+def page_destination_ids(destination_ids: list[str], page_index: int) -> list[str]:
+    start = page_index * AIRPORT_VISIBLE_ROWS
+    end = start + AIRPORT_VISIBLE_ROWS
+    return destination_ids[start:end]
+
+
+def airport_cycle_state(state: dict, cities: dict[str, dict], now: datetime) -> tuple[list[str], list[str], int, int, float]:
+    destination_ids = sorted_destination_ids(state, cities)
+    if not destination_ids:
+        return [], [], 0, 0, 1.0
+    rotate_seconds = max(1, int(state.get("airportRotateSeconds", 60)))
+    total_pages = max(1, math.ceil(len(destination_ids) / AIRPORT_VISIBLE_ROWS))
+    cycle_position = now.timestamp() % rotate_seconds
+    page_index = int(now.timestamp() // rotate_seconds) % total_pages
+    previous_page = (page_index - 1) % total_pages
+    animation_duration = min(AIRPORT_ANIMATION_SECONDS, max(0.0, rotate_seconds - 1))
+    if total_pages <= 1 or animation_duration <= 0:
+        progress = 1.0
+    else:
+        progress = min(1.0, cycle_position / animation_duration)
+    return (
+        page_destination_ids(destination_ids, previous_page),
+        page_destination_ids(destination_ids, page_index),
+        page_index,
+        total_pages,
+        progress,
+    )
+
+
+def animated_text(previous_text: str, next_text: str, progress: float, row_index: int, column_seed: int) -> str:
+    if progress >= 1.0:
+        return next_text
+    row_delay = row_index * 0.18
+    if progress <= row_delay:
+        return previous_text
+    local_progress = min(1.0, (progress - row_delay) / max(0.001, 1.0 - row_delay))
+    target_length = max(len(previous_text), len(next_text))
+    previous = previous_text.ljust(target_length)
+    target = next_text.ljust(target_length)
+    char_window = max(1, target_length + 4)
+    reveal = int(local_progress * char_window)
+    output = []
+    for index, target_char in enumerate(target):
+        if index < reveal:
+            output.append(target_char)
+            continue
+        previous_char = previous[index]
+        if previous_char == target_char and target_char != " ":
+            output.append(target_char)
+            continue
+        glyph_index = int((progress * 40) + row_index * 7 + index * 3 + column_seed) % len(FLAP_GLYPHS)
+        output.append(FLAP_GLYPHS[glyph_index] if target_char != " " else " ")
+    return "".join(output).rstrip()
+
+
 def draw_airport_board(
     surface: pygame.Surface,
     state: dict,
@@ -430,18 +565,21 @@ def draw_airport_board(
     row_font = pygame.font.SysFont("Courier New", max(18, width // 54), bold=True)
     local_font = pygame.font.SysFont("Courier New", max(42, width // 18), bold=True)
 
-    destination_ids = state.get("airportDestinations") or []
     home = state.get("homeLocation") or None
     airport_units = state.get("airportUnits", "imperial")
     header = header_font.render("AIRPORT BOARD", True, (250, 228, 167))
     home_text = header_font.render(f"HOME  {home.get('city', 'NOT SET').upper()}" if home else "HOME  NOT SET", True, (196, 177, 139))
     surface.blit(header, (board.x + 18, board.y + 18))
     surface.blit(home_text, (board.right - home_text.get_width() - 18, board.y + 18))
+    previous_ids, visible_ids, page_index, total_pages, animation_progress = airport_cycle_state(state, cities, now)
+    page_text = row_font.render(f"PAGE {page_index + 1}/{total_pages}" if total_pages else "PAGE 0/0", True, (195, 178, 143))
+    surface.blit(page_text, (board.right - page_text.get_width() - 18, board.y + 58))
 
     columns = [
         ("CITY", board.x + 26),
-        ("DISTANCE", board.x + int(board.width * 0.38)),
-        ("LOCAL TIME · WEATHER", board.x + int(board.width * 0.58)),
+        ("DISTANCE", board.x + int(board.width * 0.34)),
+        ("LOCAL TIME", board.x + int(board.width * 0.52)),
+        ("WEATHER", board.x + int(board.width * 0.69)),
     ]
     column_y = board.y + 76
     for label, x in columns:
@@ -449,37 +587,81 @@ def draw_airport_board(
         surface.blit(heading, (x, column_y))
 
     row_y = column_y + 42
-    row_h = max(48, height // 12)
-    if not destination_ids:
+    row_h = max(54, height // 10)
+    if not visible_ids:
         empty = row_font.render("NO DESTINATIONS SELECTED", True, (255, 240, 196))
         surface.blit(empty, (board.x + 26, row_y + 20))
     else:
-        for destination_id in destination_ids[:6]:
+        for row_index, destination_id in enumerate(visible_ids):
             city = cities.get(destination_id)
             if not city:
                 continue
+            previous_city = cities.get(previous_ids[row_index]) if row_index < len(previous_ids) else None
             row_rect = pygame.Rect(board.x + 18, row_y, board.width - 36, row_h)
             pygame.draw.rect(surface, (34, 26, 21), row_rect, border_radius=8)
             pygame.draw.rect(surface, (60, 51, 44), row_rect, 1, border_radius=8)
-            city_text = row_font.render(city["city"].upper(), True, (255, 240, 196))
+            city_value = city["city"].upper()
+            previous_city_value = previous_city["city"].upper() if previous_city else ""
+            city_text = row_font.render(animated_text(previous_city_value, city_value, animation_progress, row_index, 3), True, (255, 240, 196))
             distance_value = format_distance(home, city, airport_units)
-            distance_text = row_font.render(distance_value, True, (255, 240, 196))
-            local_time_value = datetime.now(ZoneInfo(city["timezone"])).strftime("%H:%M:%S")
-            weather = weather_cache.get(destination_id)
-            local_weather_text = row_font.render(
-                f"{local_time_value}  {format_weather(weather, airport_units)}",
+            previous_distance_value = format_distance(home, previous_city, airport_units) if previous_city else ""
+            distance_text = row_font.render(
+                animated_text(previous_distance_value, distance_value, animation_progress, row_index, 11),
                 True,
                 (255, 240, 196),
             )
+            local_time_value = datetime.now(ZoneInfo(city["timezone"])).strftime("%H:%M:%S")
+            previous_local_time = datetime.now(ZoneInfo(previous_city["timezone"])).strftime("%H:%M:%S") if previous_city else ""
+            weather = weather_cache.get(destination_id)
+            previous_weather = weather_cache.get(previous_ids[row_index]) if row_index < len(previous_ids) else None
+            local_time_text = row_font.render(
+                animated_text(previous_local_time, local_time_value, animation_progress, row_index, 19),
+                True,
+                (255, 240, 196),
+            )
+            weather_value = format_weather(weather, airport_units)
+            previous_weather_value = format_weather(previous_weather, airport_units) if previous_weather else ""
+            weather_bg, weather_fg = weather_style(weather)
+            weather_text = row_font.render(
+                animated_text(previous_weather_value, weather_value, animation_progress, row_index, 29),
+                True,
+                weather_fg,
+            )
+            weather_chip = pygame.Rect(
+                board.x + int(board.width * 0.69),
+                row_y + 8,
+                min(int(board.width * 0.25), weather_text.get_width() + 20),
+                row_h - 16,
+            )
             surface.blit(city_text, (board.x + 26, row_y + 12))
-            surface.blit(distance_text, (board.x + int(board.width * 0.38), row_y + 12))
-            surface.blit(local_weather_text, (board.x + int(board.width * 0.58), row_y + 12))
+            surface.blit(distance_text, (board.x + int(board.width * 0.34), row_y + 12))
+            surface.blit(local_time_text, (board.x + int(board.width * 0.52), row_y + 12))
+            pygame.draw.rect(surface, weather_bg, weather_chip, border_radius=8)
+            pygame.draw.rect(surface, (255, 240, 196), weather_chip, 1, border_radius=8)
+            surface.blit(
+                weather_text,
+                weather_text.get_rect(center=weather_chip.center),
+            )
             row_y += row_h + 10
 
     footer_label = header_font.render("PI LOCAL TIME", True, (196, 177, 139))
     footer_time = local_font.render(now.strftime("%H:%M:%S"), True, (255, 240, 196))
+    footer_weather = weather_cache.get(HOME_WEATHER_ID)
+    footer_weather_value = format_weather(footer_weather, airport_units)
+    footer_weather_bg, footer_weather_fg = weather_style(footer_weather)
+    footer_weather_font = pygame.font.SysFont("Courier New", max(20, width // 28), bold=True)
+    footer_weather_text = footer_weather_font.render(footer_weather_value, True, footer_weather_fg)
     surface.blit(footer_label, (board.x + 18, board.bottom + 20))
     surface.blit(footer_time, (board.x + 18, board.bottom + 56))
+    footer_chip = pygame.Rect(
+        board.x + 18 + footer_time.get_width() + 26,
+        board.bottom + 54,
+        footer_weather_text.get_width() + 24,
+        footer_time.get_height() + 8,
+    )
+    pygame.draw.rect(surface, footer_weather_bg, footer_chip, border_radius=10)
+    pygame.draw.rect(surface, (255, 240, 196), footer_chip, 1, border_radius=10)
+    surface.blit(footer_weather_text, footer_weather_text.get_rect(center=footer_chip.center))
 
 
 def draw_bar_group(
@@ -490,12 +672,14 @@ def draw_bar_group(
     max_value: int,
     title_font: pygame.font.Font,
     meta_font: pygame.font.Font,
+    palette_name: str,
 ) -> None:
+    palette = LICHTZEITPEGEL_PALETTES.get(palette_name, LICHTZEITPEGEL_PALETTES["amber"])
     pygame.draw.rect(surface, (18, 16, 12), rect, border_radius=18)
     pygame.draw.rect(surface, (86, 72, 50), rect, 2, border_radius=18)
 
-    label_text = title_font.render(label, True, (238, 218, 166))
-    value_text = meta_font.render(str(value), True, (165, 149, 112))
+    label_text = title_font.render(label, True, palette["label"])
+    value_text = meta_font.render(str(value), True, palette["label"])
     surface.blit(label_text, (rect.x + 18, rect.y + 12))
     surface.blit(value_text, (rect.right - value_text.get_width() - 18, rect.y + 16))
 
@@ -513,25 +697,22 @@ def draw_bar_group(
             band_height,
         )
         is_active = index >= max_value - value
-        fill = (241, 183, 73) if is_active else (54, 46, 34)
-        edge = (255, 216, 132) if is_active else (78, 64, 44)
+        fill = palette["fill"] if is_active else (54, 46, 34)
+        edge = palette["edge"] if is_active else (78, 64, 44)
         pygame.draw.rect(surface, fill, band_rect, border_radius=min(10, band_height // 2))
         pygame.draw.rect(surface, edge, band_rect, 1, border_radius=min(10, band_height // 2))
 
 
-def draw_lichtzeitpegel(surface: pygame.Surface, now: datetime) -> None:
+def draw_lichtzeitpegel(surface: pygame.Surface, now: datetime, state: dict) -> None:
     width, height = surface.get_size()
     surface.fill((8, 7, 5))
 
     title_font = pygame.font.SysFont("Georgia", max(26, width // 18), bold=True)
-    subtitle_font = pygame.font.SysFont("Georgia", max(16, width // 34))
     label_font = pygame.font.SysFont("Arial", max(20, width // 24), bold=True)
     meta_font = pygame.font.SysFont("Arial", max(18, width // 30))
 
     title = title_font.render("LICHTZEITPEGEL", True, (243, 225, 180))
-    subtitle = subtitle_font.render("H h M m S s  ·  24-hour tower clock bands", True, (164, 145, 107))
     surface.blit(title, title.get_rect(center=(width // 2, int(height * 0.06))))
-    surface.blit(subtitle, subtitle.get_rect(center=(width // 2, int(height * 0.11))))
 
     digits = [
         ("H", now.hour // 10, 2),
@@ -541,6 +722,7 @@ def draw_lichtzeitpegel(surface: pygame.Surface, now: datetime) -> None:
         ("S", now.second // 10, 5),
         ("s", now.second % 10, 9),
     ]
+    color_map = state.get("lichtzeitpegelColors") or DEFAULT_STATE["lichtzeitpegelColors"]
 
     portrait = height >= width
     if portrait:
@@ -549,7 +731,7 @@ def draw_lichtzeitpegel(surface: pygame.Surface, now: datetime) -> None:
         group_height = (outer.height - gap * (len(digits) - 1)) // len(digits)
         for index, (label, value, max_value) in enumerate(digits):
             rect = pygame.Rect(outer.x, outer.y + index * (group_height + gap), outer.width, group_height)
-            draw_bar_group(surface, rect, label, value, max_value, label_font, meta_font)
+            draw_bar_group(surface, rect, label, value, max_value, label_font, meta_font, color_map.get(label, "amber"))
     else:
         outer = pygame.Rect(int(width * 0.06), int(height * 0.18), int(width * 0.88), int(height * 0.70))
         cols = 3
@@ -567,11 +749,172 @@ def draw_lichtzeitpegel(surface: pygame.Surface, now: datetime) -> None:
                 group_width,
                 group_height,
             )
-            draw_bar_group(surface, rect, label, value, max_value, label_font, meta_font)
+            draw_bar_group(surface, rect, label, value, max_value, label_font, meta_font, color_map.get(label, "amber"))
 
-    footer_font = pygame.font.SysFont("Arial", max(24, width // 22), bold=True)
-    footer = footer_font.render(now.strftime("%H:%M:%S"), True, (243, 225, 180))
-    surface.blit(footer, footer.get_rect(center=(width // 2, int(height * 0.95))))
+
+def word_clock_font(size: int, style: str) -> pygame.font.Font:
+    bold = style in {"classic-sans", "serif-display", "urw-gothic-demi"}
+    italic = style in {"cursive-italic", "artsy-script"}
+    for family in WORD_CLOCK_FONT_FAMILIES.get(style, WORD_CLOCK_FONT_FAMILIES["classic-sans"]):
+        font = pygame.font.SysFont(family, size, bold=bold, italic=italic)
+        if font:
+            return font
+    return pygame.font.SysFont(None, size, bold=bold, italic=italic)
+
+
+def english_number(value: int) -> str:
+    ones = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+    teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty"]
+    if value < 10:
+        return ones[value]
+    if value < 20:
+        return teens[value - 10]
+    ten = tens[value // 10]
+    one = value % 10
+    return ten if one == 0 else f"{ten}-{ones[one]}"
+
+
+def romance_number(value: int, ones: list[str], teens: dict[int, str], tens: dict[int, str], joiner: str) -> str:
+    if value < 10:
+        return ones[value]
+    if value in teens:
+        return teens[value]
+    ten = value // 10
+    one = value % 10
+    if one == 0:
+        return tens[ten]
+    return f"{tens[ten]}{joiner}{ones[one]}"
+
+
+def czech_number(value: int) -> str:
+    ones = ["nula", "jedna", "dve", "tri", "ctyri", "pet", "sest", "sedm", "osm", "devet"]
+    teens = {10: "deset", 11: "jedenact", 12: "dvanact", 13: "trinact", 14: "ctrnact", 15: "patnact", 16: "sestnact", 17: "sedmnact", 18: "osmnact", 19: "devatenact"}
+    tens = {2: "dvacet", 3: "tricet", 4: "ctyricet", 5: "padesat"}
+    return romance_number(value, ones, teens, tens, " ")
+
+
+def russian_number(value: int) -> str:
+    ones = ["nol", "odin", "dva", "tri", "chetyre", "pyat", "shest", "sem", "vosem", "devyat"]
+    teens = {10: "desyat", 11: "odinnadtsat", 12: "dvenadtsat", 13: "trinadtsat", 14: "chetyrnadtsat", 15: "pyatnadtsat", 16: "shestnadtsat", 17: "semnadtsat", 18: "vosemnadtsat", 19: "devyatnadtsat"}
+    tens = {2: "dvadtsat", 3: "tridtsat", 4: "sorok", 5: "pyatdesyat"}
+    return romance_number(value, ones, teens, tens, " ")
+
+
+def german_number(value: int) -> str:
+    ones = ["null", "eins", "zwei", "drei", "vier", "fuenf", "sechs", "sieben", "acht", "neun"]
+    teens = {10: "zehn", 11: "elf", 12: "zwoelf", 13: "dreizehn", 14: "vierzehn", 15: "fuenfzehn", 16: "sechzehn", 17: "siebzehn", 18: "achtzehn", 19: "neunzehn"}
+    tens = {2: "zwanzig", 3: "dreissig", 4: "vierzig", 5: "fuenfzig"}
+    if value < 10:
+        return ones[value]
+    if value in teens:
+        return teens[value]
+    ten = value // 10
+    one = value % 10
+    return tens[ten] if one == 0 else f"{ones[one]}und{tens[ten]}"
+
+
+def direct_word_clock_text(now: datetime, language: str) -> str:
+    hour12 = ((now.hour - 1) % 12) + 1
+    minute = now.minute
+    if language == "english":
+        return f"{english_number(hour12)} {english_number(minute)}"
+    if language == "german":
+        return f"{german_number(now.hour)} uhr {german_number(minute)}"
+    if language == "french":
+        ones = ["zero", "une", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"]
+        teens = {10: "dix", 11: "onze", 12: "douze", 13: "treize", 14: "quatorze", 15: "quinze", 16: "seize", 17: "dix-sept", 18: "dix-huit", 19: "dix-neuf"}
+        tens = {2: "vingt", 3: "trente", 4: "quarante", 5: "cinquante"}
+        return f"{romance_number(now.hour, ones, teens, tens, '-')} heures {romance_number(minute, ['zero', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf'], teens, tens, '-')}"
+    if language == "spanish":
+        ones = ["cero", "una", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"]
+        teens = {10: "diez", 11: "once", 12: "doce", 13: "trece", 14: "catorce", 15: "quince", 16: "dieciseis", 17: "diecisiete", 18: "dieciocho", 19: "diecinueve"}
+        tens = {2: "veinte", 3: "treinta", 4: "cuarenta", 5: "cincuenta"}
+        return f"{romance_number(hour12, ones, teens, tens, ' y ')} {romance_number(minute, ['cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'], teens, tens, ' y ')}"
+    if language == "czech":
+        return f"{czech_number(now.hour)} {czech_number(minute)}"
+    if language == "russian":
+        return f"{russian_number(now.hour)} {russian_number(minute)}"
+    if language == "portuguese":
+        ones = ["zero", "uma", "duas", "tres", "quatro", "cinco", "seis", "sete", "oito", "nove"]
+        teens = {10: "dez", 11: "onze", 12: "doze", 13: "treze", 14: "catorze", 15: "quinze", 16: "dezesseis", 17: "dezessete", 18: "dezoito", 19: "dezenove"}
+        tens = {2: "vinte", 3: "trinta", 4: "quarenta", 5: "cinquenta"}
+        return f"{romance_number(hour12, ones, teens, tens, ' e ')} {romance_number(minute, ['zero', 'um', 'dois', 'tres', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'], teens, tens, ' e ')}"
+    if language == "japanese":
+        hour_words = ["零時", "一時", "二時", "三時", "四時", "五時", "六時", "七時", "八時", "九時", "十時", "十一時", "十二時", "十三時", "十四時", "十五時", "十六時", "十七時", "十八時", "十九時", "二十時", "二十一時", "二十二時", "二十三時"]
+        return f"{hour_words[now.hour]} {minute}分"
+    if language == "arabic":
+        return f"{now.hour} و {minute}"
+    if language == "chinese":
+        hour_words = ["零点", "一点", "二点", "三点", "四点", "五点", "六点", "七点", "八点", "九点", "十点", "十一点", "十二点", "十三点", "十四点", "十五点", "十六点", "十七点", "十八点", "十九点", "二十点", "二十一点", "二十二点", "二十三点"]
+        return f"{hour_words[now.hour]} {minute}分"
+    return f"{now.hour}:{minute:02d}"
+
+
+def relative_word_clock_text(now: datetime, language: str) -> str:
+    rounded_minute = int(round(now.minute / 5) * 5) % 60
+    hour12 = ((now.hour - 1) % 12) + 1
+    next_hour12 = (hour12 % 12) + 1
+    if language == "english":
+        phrases = {
+            0: f"{english_number(hour12)} o'clock",
+            5: f"five past {english_number(hour12)}",
+            10: f"ten past {english_number(hour12)}",
+            15: f"quarter past {english_number(hour12)}",
+            20: f"twenty past {english_number(hour12)}",
+            25: f"twenty-five past {english_number(hour12)}",
+            30: f"half past {english_number(hour12)}",
+            35: f"twenty-five to {english_number(next_hour12)}",
+            40: f"twenty to {english_number(next_hour12)}",
+            45: f"quarter to {english_number(next_hour12)}",
+            50: f"ten to {english_number(next_hour12)}",
+            55: f"five to {english_number(next_hour12)}",
+        }
+        return phrases[rounded_minute]
+    if language == "german":
+        phrases = {
+            0: f"{german_number(now.hour)} uhr",
+            5: f"fuenf nach {german_number(hour12)}",
+            10: f"zehn nach {german_number(hour12)}",
+            15: f"viertel nach {german_number(hour12)}",
+            20: f"zwanzig nach {german_number(hour12)}",
+            25: f"fuenf vor halb {german_number(next_hour12)}",
+            30: f"halb {german_number(next_hour12)}",
+            35: f"fuenf nach halb {german_number(next_hour12)}",
+            40: f"zwanzig vor {german_number(next_hour12)}",
+            45: f"viertel vor {german_number(next_hour12)}",
+            50: f"zehn vor {german_number(next_hour12)}",
+            55: f"fuenf vor {german_number(next_hour12)}",
+        }
+        return phrases[rounded_minute]
+    return direct_word_clock_text(now, language)
+
+
+def draw_word_clock(surface: pygame.Surface, now: datetime, state: dict) -> None:
+    width, height = surface.get_size()
+    surface.fill((10, 9, 7))
+    frame = pygame.Rect(int(width * 0.06), int(height * 0.12), int(width * 0.88), int(height * 0.76))
+    pygame.draw.rect(surface, (22, 19, 15), frame, border_radius=24)
+    pygame.draw.rect(surface, (118, 100, 72), frame, 2, border_radius=24)
+
+    language = state.get("wordClockLanguage", "english")
+    style = state.get("wordClockStyle", "direct")
+    font_style = state.get("wordClockFont", "classic-sans")
+    if style == "relative" and language not in {"english", "german"}:
+        style = "direct"
+    text = relative_word_clock_text(now, language) if style == "relative" else direct_word_clock_text(now, language)
+    if language not in {"arabic", "japanese", "chinese"}:
+        text = text.upper()
+
+    max_size = max(28, min(width // 9, height // 5))
+    body_font = word_clock_font(max_size, font_style)
+    body = body_font.render(text, True, (245, 240, 228))
+    while body.get_width() > int(frame.width * 0.88) and max_size > 20:
+        max_size -= 4
+        body_font = word_clock_font(max_size, font_style)
+        body = body_font.render(text, True, (245, 240, 228))
+    body_rect = body.get_rect(center=frame.center)
+    surface.blit(body, body_rect)
 
 
 def main() -> int:
@@ -650,7 +993,9 @@ def main() -> int:
             elif mode == "airport-board":
                 draw_airport_board(work_surface, state, now, cities, weather_cache)
             elif mode == "lichtzeitpegel":
-                draw_lichtzeitpegel(work_surface, now)
+                draw_lichtzeitpegel(work_surface, now, state)
+            elif mode == "word-clock":
+                draw_word_clock(work_surface, now, state)
 
             screen.fill((0, 0, 0))
             if rotation_angle:

@@ -203,7 +203,7 @@
     <section class="panel intro">
       <h1>Clock Portal</h1>
       <p>Manage the Pi display over Wi-Fi. Upload photos, switch display modes, and configure location-aware airport board clocks.</p>
-      <p class="hint">For airport-board mode, set one home location and up to six destinations. Country is used to narrow city search.</p>
+      <p class="hint">For airport-board mode, set one home location and up to twelve destinations. Country is used to narrow city search.</p>
     </section>
 
     <section class="panel stack">
@@ -264,9 +264,17 @@
               <button id="addDestination" type="button">Add Destination</button>
             </div>
             <div class="field-row">
-              <select id="airportUnits"></select>
+              <label class="stack" for="airportUnits">
+                <span class="field-note">Distance and Temperature Units</span>
+                <select id="airportUnits"></select>
+              </label>
+              <label class="stack" for="airportRotateSeconds">
+                <span class="field-note">Board Refresh Cycle in Seconds</span>
+                <input id="airportRotateSeconds" type="number" min="15" max="3600" step="15" placeholder="Rotate every N seconds" />
+              </label>
             </div>
-            <p class="field-note">Select up to six destinations. The display shows city, distance, and local time with current temperature and sky condition.</p>
+            <p class="field-note">Board refresh cycle in seconds: how long each page stays on screen before the next page starts flipping in.</p>
+            <p class="field-note">Select up to twelve destinations. The display shows five rows at a time, sorted by distance when home is set, and rotates through the remaining rows on the interval you choose.</p>
           </div>
           <div class="stack">
             <h3>Selected Destinations</h3>
@@ -280,7 +288,53 @@
       </div>
       <div id="lichtzeitpegelPanel" class="mode-panel" hidden>
         <h3>LichtZeitPegel</h3>
-        <p class="field-note">A six-group 24-hour bar clock inspired by the Dusseldorf tower clock. The groups represent H h M m S s, where each digit lights one band per value and zero stays empty.</p>
+        <p class="field-note">Choose the band color for each group. `Amber` matches the current look.</p>
+        <div class="field-row">
+          <label class="stack" for="lichtColorH">
+            <span class="field-note">H Color</span>
+            <select id="lichtColorH"></select>
+          </label>
+          <label class="stack" for="lichtColorh">
+            <span class="field-note">h Color</span>
+            <select id="lichtColorh"></select>
+          </label>
+          <label class="stack" for="lichtColorM">
+            <span class="field-note">M Color</span>
+            <select id="lichtColorM"></select>
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="stack" for="lichtColorm">
+            <span class="field-note">m Color</span>
+            <select id="lichtColorm"></select>
+          </label>
+          <label class="stack" for="lichtColorS">
+            <span class="field-note">S Color</span>
+            <select id="lichtColorS"></select>
+          </label>
+          <label class="stack" for="lichtColors">
+            <span class="field-note">s Color</span>
+            <select id="lichtColors"></select>
+          </label>
+        </div>
+      </div>
+      <div id="wordClockPanel" class="mode-panel" hidden>
+        <h3>Word Clock</h3>
+        <p class="field-note">Displays the current time as words with no seconds. Relative style is intended primarily for English and German.</p>
+        <div class="field-row">
+          <label class="stack" for="wordClockLanguage">
+            <span class="field-note">Language</span>
+            <select id="wordClockLanguage"></select>
+          </label>
+          <label class="stack" for="wordClockStyle">
+            <span class="field-note">Time Style</span>
+            <select id="wordClockStyle"></select>
+          </label>
+          <label class="stack" for="wordClockFont">
+            <span class="field-note">Font Style</span>
+            <select id="wordClockFont"></select>
+          </label>
+        </div>
       </div>
       <p class="meta" id="statusText">Ready.</p>
     </section>

@@ -28,6 +28,17 @@ const citySelect = document.getElementById("citySelect");
 const addDestination = document.getElementById("addDestination");
 const destinationList = document.getElementById("destinationList");
 const airportUnits = document.getElementById("airportUnits");
+const airportRotateSeconds = document.getElementById("airportRotateSeconds");
+const lichtColorH = document.getElementById("lichtColorH");
+const lichtColorh = document.getElementById("lichtColorh");
+const lichtColorM = document.getElementById("lichtColorM");
+const lichtColorm = document.getElementById("lichtColorm");
+const lichtColorS = document.getElementById("lichtColorS");
+const lichtColors = document.getElementById("lichtColors");
+const wordClockPanel = document.getElementById("wordClockPanel");
+const wordClockLanguage = document.getElementById("wordClockLanguage");
+const wordClockStyle = document.getElementById("wordClockStyle");
+const wordClockFont = document.getElementById("wordClockFont");
 
 let currentState = null;
 let currentPhotos = [];
@@ -35,6 +46,11 @@ let currentCities = [];
 let maxAirportDestinations = 6;
 let currentRotationModes = [];
 let currentAirportUnitModes = [];
+let airportRotateSecondsRange = { min: 15, max: 3600 };
+let lichtzeitpegelColorModes = [];
+let wordClockLanguages = [];
+let wordClockStyles = [];
+let wordClockFonts = [];
 
 function setStatus(message) {
   statusText.textContent = message;
@@ -69,7 +85,7 @@ function cityOptionById(cityId) {
 }
 
 function populateDisplayMode() {
-  const modes = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel"];
+  const modes = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock"];
   displayMode.innerHTML = "";
   modes.forEach((mode) => displayMode.appendChild(createOption(mode, mode)));
   displayMode.value = currentState.displayMode;
@@ -107,6 +123,62 @@ function populateAirportUnits() {
   airportUnits.value = currentState.airportUnits || "imperial";
 }
 
+function lichtColorLabel(mode) {
+  const labels = {
+    amber: "Amber",
+    red: "Red",
+    green: "Green",
+    blue: "Blue",
+    purple: "Purple",
+    white: "White",
+  };
+  return labels[mode] || mode;
+}
+
+function populateLichtzeitpegelColors() {
+  const modes = lichtzeitpegelColorModes.length ? lichtzeitpegelColorModes : ["amber"];
+  const controls = {
+    H: lichtColorH,
+    h: lichtColorh,
+    M: lichtColorM,
+    m: lichtColorm,
+    S: lichtColorS,
+    s: lichtColors,
+  };
+  Object.entries(controls).forEach(([key, control]) => {
+    control.innerHTML = "";
+    modes.forEach((mode) => control.appendChild(createOption(mode, lichtColorLabel(mode))));
+    control.value = currentState.lichtzeitpegelColors?.[key] || "amber";
+  });
+}
+
+function populateWordClockSettings() {
+  wordClockLanguage.innerHTML = "";
+  (wordClockLanguages.length ? wordClockLanguages : ["english"]).forEach((mode) => {
+    wordClockLanguage.appendChild(createOption(mode, mode));
+  });
+  wordClockLanguage.value = currentState.wordClockLanguage || "english";
+
+  wordClockStyle.innerHTML = "";
+  (wordClockStyles.length ? wordClockStyles : ["direct", "relative"]).forEach((mode) => {
+    wordClockStyle.appendChild(createOption(mode, mode));
+  });
+  wordClockStyle.value = currentState.wordClockStyle || "direct";
+
+  const fontLabels = {
+    "classic-sans": "Classic Sans",
+    "serif-display": "Serif Display",
+    "cursive-italic": "Cursive / Italic",
+    "urw-gothic-demi": "URW Gothic Demi",
+    "artsy-script": "Artsy Script",
+  };
+  wordClockFont.innerHTML = "";
+  (wordClockFonts.length ? wordClockFonts : ["classic-sans"]).forEach((mode) => {
+    wordClockFont.appendChild(createOption(mode, fontLabels[mode] || mode));
+  });
+  wordClockFont.value = currentState.wordClockFont || "classic-sans";
+}
+
 function populateCountryFilter() {
   const countries = countriesFromCities();
   countryFilter.innerHTML = "";
@@ -136,6 +208,7 @@ function updateModePanels() {
   worldPanel.hidden = mode !== "world-daylight";
   airportPanel.hidden = mode !== "airport-board";
   lichtzeitpegelPanel.hidden = mode !== "lichtzeitpegel";
+  wordClockPanel.hidden = mode !== "word-clock";
 }
 
 function updateHomeLocationStatus() {
@@ -268,13 +341,23 @@ async function fetchState() {
   currentCities = payload.cities;
   currentRotationModes = payload.rotationModes || [];
   currentAirportUnitModes = payload.airportUnitModes || [];
+  lichtzeitpegelColorModes = payload.lichtzeitpegelColorModes || [];
+  wordClockLanguages = payload.wordClockLanguages || [];
+  wordClockStyles = payload.wordClockStyles || [];
+  wordClockFonts = payload.wordClockFonts || [];
   maxAirportDestinations = payload.maxAirportDestinations || 6;
+  airportRotateSecondsRange = payload.airportRotateSecondsRange || airportRotateSecondsRange;
 
   showAnalog.checked = payload.state.showAnalog !== false;
   mode24.checked = payload.state.mode24 !== false;
+  airportRotateSeconds.min = airportRotateSecondsRange.min;
+  airportRotateSeconds.max = airportRotateSecondsRange.max;
+  airportRotateSeconds.value = payload.state.airportRotateSeconds || 60;
   populateDisplayMode();
   populateRotationMode();
   populateAirportUnits();
+  populateLichtzeitpegelColors();
+  populateWordClockSettings();
   populateCountryFilter();
   populateCitySelect();
   populateHomeLocationSelect();
@@ -331,6 +414,18 @@ async function saveDisplaySettings() {
     displayMode: displayMode.value,
     rotation: rotationMode.value,
     airportUnits: airportUnits.value,
+    airportRotateSeconds: Number(airportRotateSeconds.value || 60),
+    wordClockLanguage: wordClockLanguage.value,
+    wordClockStyle: wordClockStyle.value,
+    wordClockFont: wordClockFont.value,
+    lichtzeitpegelColors: {
+      H: lichtColorH.value,
+      h: lichtColorh.value,
+      M: lichtColorM.value,
+      m: lichtColorm.value,
+      S: lichtColorS.value,
+      s: lichtColors.value,
+    },
     showAnalog: showAnalog.checked,
     mode24: mode24.checked
   }, "Display settings saved.");

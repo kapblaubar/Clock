@@ -17,10 +17,16 @@ INDEX_PATH = BASE_DIR / "index.html"
 MANAGE_PATH = BASE_DIR / "manage.html"
 
 ALLOWED_EXTENSIONS = {".gif", ".webp", ".png", ".jpg", ".jpeg", ".avif"}
-DISPLAY_MODES = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel"]
+DISPLAY_MODES = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock"]
 ROTATION_MODES = ["landscape", "portrait", "landscape-flipped", "portrait-flipped"]
 AIRPORT_UNIT_MODES = ["imperial", "metric"]
-MAX_AIRPORT_DESTINATIONS = 6
+LICHTZEITPEGEL_COLOR_MODES = ["amber", "red", "green", "blue", "purple", "white"]
+WORD_CLOCK_LANGUAGES = ["english", "german", "french", "spanish", "czech", "russian", "portuguese", "japanese", "arabic", "chinese"]
+WORD_CLOCK_STYLES = ["direct", "relative"]
+WORD_CLOCK_FONTS = ["classic-sans", "serif-display", "cursive-italic", "urw-gothic-demi", "artsy-script"]
+MAX_AIRPORT_DESTINATIONS = 12
+MIN_AIRPORT_ROTATE_SECONDS = 15
+MAX_AIRPORT_ROTATE_SECONDS = 3600
 DEFAULT_STATE = {
     "displayMode": "graphic",
     "defaultPhoto": "assets/bg1.webp",
@@ -28,6 +34,18 @@ DEFAULT_STATE = {
     "mode24": True,
     "rotation": "portrait",
     "airportUnits": "imperial",
+    "airportRotateSeconds": 60,
+    "wordClockLanguage": "english",
+    "wordClockStyle": "direct",
+    "wordClockFont": "classic-sans",
+    "lichtzeitpegelColors": {
+        "H": "amber",
+        "h": "amber",
+        "M": "amber",
+        "m": "amber",
+        "S": "amber",
+        "s": "amber",
+    },
     "airportDestinations": ["nyc-us"],
     "homeLocation": None,
     "customPlaces": [],
@@ -64,6 +82,25 @@ def load_state() -> dict:
         state["rotation"] = DEFAULT_STATE["rotation"]
     if state.get("airportUnits") not in AIRPORT_UNIT_MODES:
         state["airportUnits"] = DEFAULT_STATE["airportUnits"]
+    if state.get("wordClockLanguage") not in WORD_CLOCK_LANGUAGES:
+        state["wordClockLanguage"] = DEFAULT_STATE["wordClockLanguage"]
+    if state.get("wordClockStyle") not in WORD_CLOCK_STYLES:
+        state["wordClockStyle"] = DEFAULT_STATE["wordClockStyle"]
+    if state.get("wordClockFont") not in WORD_CLOCK_FONTS:
+        state["wordClockFont"] = DEFAULT_STATE["wordClockFont"]
+    colors = state.get("lichtzeitpegelColors")
+    normalized_colors = DEFAULT_STATE["lichtzeitpegelColors"].copy()
+    if isinstance(colors, dict):
+        for key in normalized_colors:
+            value = str(colors.get(key, normalized_colors[key])).lower()
+            if value in LICHTZEITPEGEL_COLOR_MODES:
+                normalized_colors[key] = value
+    state["lichtzeitpegelColors"] = normalized_colors
+    try:
+        rotate_seconds = int(state.get("airportRotateSeconds", DEFAULT_STATE["airportRotateSeconds"]))
+    except (TypeError, ValueError):
+        rotate_seconds = DEFAULT_STATE["airportRotateSeconds"]
+    state["airportRotateSeconds"] = max(MIN_AIRPORT_ROTATE_SECONDS, min(MAX_AIRPORT_ROTATE_SECONDS, rotate_seconds))
     state["airportDestinations"] = [
         destination for destination in list(state.get("airportDestinations") or [])[:MAX_AIRPORT_DESTINATIONS]
         if isinstance(destination, str) and city_exists(destination)
@@ -186,7 +223,15 @@ def api_state():
         "displayModes": DISPLAY_MODES,
         "rotationModes": ROTATION_MODES,
         "airportUnitModes": AIRPORT_UNIT_MODES,
+        "lichtzeitpegelColorModes": LICHTZEITPEGEL_COLOR_MODES,
+        "wordClockLanguages": WORD_CLOCK_LANGUAGES,
+        "wordClockStyles": WORD_CLOCK_STYLES,
+        "wordClockFonts": WORD_CLOCK_FONTS,
         "maxAirportDestinations": MAX_AIRPORT_DESTINATIONS,
+        "airportRotateSecondsRange": {
+            "min": MIN_AIRPORT_ROTATE_SECONDS,
+            "max": MAX_AIRPORT_ROTATE_SECONDS,
+        },
     })
 
 
@@ -218,6 +263,45 @@ def update_state():
         if airport_units not in AIRPORT_UNIT_MODES:
             return jsonify({"error": "Unsupported airport unit mode"}), 400
         state["airportUnits"] = airport_units
+
+    if "airportRotateSeconds" in payload:
+        try:
+            rotate_seconds = int(payload["airportRotateSeconds"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "airportRotateSeconds must be an integer"}), 400
+        if not MIN_AIRPORT_ROTATE_SECONDS <= rotate_seconds <= MAX_AIRPORT_ROTATE_SECONDS:
+            return jsonify({"error": "airportRotateSeconds out of range"}), 400
+        state["airportRotateSeconds"] = rotate_seconds
+
+    if "wordClockLanguage" in payload:
+        word_clock_language = str(payload["wordClockLanguage"])
+        if word_clock_language not in WORD_CLOCK_LANGUAGES:
+            return jsonify({"error": "Unsupported word clock language"}), 400
+        state["wordClockLanguage"] = word_clock_language
+
+    if "wordClockStyle" in payload:
+        word_clock_style = str(payload["wordClockStyle"])
+        if word_clock_style not in WORD_CLOCK_STYLES:
+            return jsonify({"error": "Unsupported word clock style"}), 400
+        state["wordClockStyle"] = word_clock_style
+
+    if "wordClockFont" in payload:
+        word_clock_font = str(payload["wordClockFont"])
+        if word_clock_font not in WORD_CLOCK_FONTS:
+            return jsonify({"error": "Unsupported word clock font"}), 400
+        state["wordClockFont"] = word_clock_font
+
+    if "lichtzeitpegelColors" in payload:
+        incoming_colors = payload["lichtzeitpegelColors"]
+        if not isinstance(incoming_colors, dict):
+            return jsonify({"error": "lichtzeitpegelColors must be an object"}), 400
+        normalized_colors = DEFAULT_STATE["lichtzeitpegelColors"].copy()
+        for key in normalized_colors:
+            value = str(incoming_colors.get(key, normalized_colors[key])).lower()
+            if value not in LICHTZEITPEGEL_COLOR_MODES:
+                return jsonify({"error": f"Unsupported LichtZeitPegel color: {value}"}), 400
+            normalized_colors[key] = value
+        state["lichtzeitpegelColors"] = normalized_colors
 
     if "airportDestinations" in payload:
         incoming = payload["airportDestinations"]
