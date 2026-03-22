@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent
 STATE_PATH = BASE_DIR / "clock_state.json"
 CITIES_PATH = BASE_DIR / "cities.json"
 WORLD_MAP_PATH = BASE_DIR / "assets" / "tz-map-1518922800.png"
+FONTS_DIR = BASE_DIR / "assets" / "fonts"
 DEFAULT_STATE = {
     "displayMode": "graphic",
     "defaultPhoto": "assets/bg1.webp",
@@ -61,10 +62,14 @@ LICHTZEITPEGEL_PALETTES = {
 }
 WORD_CLOCK_FONT_FAMILIES = {
     "classic-sans": ["FreeSans", "Liberation Sans", "Nimbus Sans", "DejaVu Sans"],
-    "serif-display": ["URW Bookman", "Liberation Serif", "Nimbus Roman", "FreeSerif"],
     "cursive-italic": ["Z003", "URW Bookman", "Liberation Serif", "FreeSerif"],
     "urw-gothic-demi": ["URW Gothic", "Nimbus Sans", "FreeSans", "Liberation Sans"],
-    "artsy-script": ["Z003", "URW Bookman", "P052", "FreeSerif"],
+}
+WORD_CLOCK_BUNDLED_FONTS = {
+    "arabic": FONTS_DIR / "NotoNaskhArabic-Regular.ttf",
+    "japanese": FONTS_DIR / "NotoSansJP-Regular.otf",
+    "chinese": FONTS_DIR / "NotoSansSC-Regular.otf",
+    "default": FONTS_DIR / "NotoSans-Regular.ttf",
 }
 
 
@@ -336,6 +341,8 @@ def draw_analog(surface: pygame.Surface, now: datetime) -> None:
 def initialize_display() -> pygame.Surface:
     os.environ.setdefault("DISPLAY", ":0")
     pygame.display.init()
+    if os.name == "nt":
+        return pygame.display.set_mode((900, 1600), pygame.RESIZABLE)
     return pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 
 
@@ -752,9 +759,17 @@ def draw_lichtzeitpegel(surface: pygame.Surface, now: datetime, state: dict) -> 
             draw_bar_group(surface, rect, label, value, max_value, label_font, meta_font, color_map.get(label, "amber"))
 
 
-def word_clock_font(size: int, style: str) -> pygame.font.Font:
-    bold = style in {"classic-sans", "serif-display", "urw-gothic-demi"}
-    italic = style in {"cursive-italic", "artsy-script"}
+def word_clock_font(size: int, style: str, language: str) -> pygame.font.Font:
+    if language in {"arabic", "japanese", "chinese"}:
+        bundled_path = WORD_CLOCK_BUNDLED_FONTS.get(language)
+        if bundled_path and bundled_path.exists():
+            return pygame.font.Font(str(bundled_path), size)
+    default_path = WORD_CLOCK_BUNDLED_FONTS["default"]
+    if language in {"russian", "czech", "portuguese", "french", "spanish", "english", "german"} and style == "classic-sans" and default_path.exists():
+        return pygame.font.Font(str(default_path), size)
+
+    bold = style in {"classic-sans", "urw-gothic-demi"}
+    italic = style == "cursive-italic"
     for family in WORD_CLOCK_FONT_FAMILIES.get(style, WORD_CLOCK_FONT_FAMILIES["classic-sans"]):
         font = pygame.font.SysFont(family, size, bold=bold, italic=italic)
         if font:
@@ -814,41 +829,79 @@ def german_number(value: int) -> str:
     return tens[ten] if one == 0 else f"{ones[one]}und{tens[ten]}"
 
 
-def direct_word_clock_text(now: datetime, language: str) -> str:
+def direct_word_clock_lines(now: datetime, language: str) -> tuple[str, str]:
     hour12 = ((now.hour - 1) % 12) + 1
     minute = now.minute
+    if minute == 0:
+        if language == "english":
+            return english_number(hour12), ""
+        if language == "german":
+            return f"{german_number(now.hour)} uhr", ""
+        if language == "french":
+            ones = ["zero", "une", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"]
+            teens = {10: "dix", 11: "onze", 12: "douze", 13: "treize", 14: "quatorze", 15: "quinze", 16: "seize", 17: "dix-sept", 18: "dix-huit", 19: "dix-neuf"}
+            tens = {2: "vingt", 3: "trente", 4: "quarante", 5: "cinquante"}
+            return f"{romance_number(now.hour, ones, teens, tens, '-')}", ""
+        if language == "spanish":
+            ones = ["cero", "una", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"]
+            teens = {10: "diez", 11: "once", 12: "doce", 13: "trece", 14: "catorce", 15: "quince", 16: "dieciseis", 17: "diecisiete", 18: "dieciocho", 19: "diecinueve"}
+            tens = {2: "veinte", 3: "treinta", 4: "cuarenta", 5: "cincuenta"}
+            return romance_number(hour12, ones, teens, tens, " y "), ""
+        if language == "czech":
+            return czech_number(now.hour), ""
+        if language == "russian":
+            return russian_number(now.hour), ""
+        if language == "portuguese":
+            ones = ["zero", "uma", "duas", "tres", "quatro", "cinco", "seis", "sete", "oito", "nove"]
+            teens = {10: "dez", 11: "onze", 12: "doze", 13: "treze", 14: "catorze", 15: "quinze", 16: "dezesseis", 17: "dezessete", 18: "dezoito", 19: "dezenove"}
+            tens = {2: "vinte", 3: "trinta", 4: "quarenta", 5: "cinquenta"}
+            return romance_number(hour12, ones, teens, tens, " e "), ""
+        if language == "japanese":
+            hour_words = ["零時", "一時", "二時", "三時", "四時", "五時", "六時", "七時", "八時", "九時", "十時", "十一時", "十二時", "十三時", "十四時", "十五時", "十六時", "十七時", "十八時", "十九時", "二十時", "二十一時", "二十二時", "二十三時"]
+            return hour_words[now.hour], ""
+        if language == "arabic":
+            return str(now.hour), ""
+        if language == "chinese":
+            hour_words = ["零点", "一点", "二点", "三点", "四点", "五点", "六点", "七点", "八点", "九点", "十点", "十一点", "十二点", "十三点", "十四点", "十五点", "十六点", "十七点", "十八点", "十九点", "二十点", "二十一点", "二十二点", "二十三点"]
+            return hour_words[now.hour], ""
+        return str(now.hour), ""
     if language == "english":
-        return f"{english_number(hour12)} {english_number(minute)}"
+        return english_number(hour12), english_number(minute)
     if language == "german":
-        return f"{german_number(now.hour)} uhr {german_number(minute)}"
+        return f"{german_number(now.hour)} uhr", german_number(minute)
     if language == "french":
         ones = ["zero", "une", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"]
         teens = {10: "dix", 11: "onze", 12: "douze", 13: "treize", 14: "quatorze", 15: "quinze", 16: "seize", 17: "dix-sept", 18: "dix-huit", 19: "dix-neuf"}
         tens = {2: "vingt", 3: "trente", 4: "quarante", 5: "cinquante"}
-        return f"{romance_number(now.hour, ones, teens, tens, '-')} heures {romance_number(minute, ['zero', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf'], teens, tens, '-')}"
+        return romance_number(now.hour, ones, teens, tens, "-"), f"heures {romance_number(minute, ['zero', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf'], teens, tens, '-')}"
     if language == "spanish":
         ones = ["cero", "una", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"]
         teens = {10: "diez", 11: "once", 12: "doce", 13: "trece", 14: "catorce", 15: "quince", 16: "dieciseis", 17: "diecisiete", 18: "dieciocho", 19: "diecinueve"}
         tens = {2: "veinte", 3: "treinta", 4: "cuarenta", 5: "cincuenta"}
-        return f"{romance_number(hour12, ones, teens, tens, ' y ')} {romance_number(minute, ['cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'], teens, tens, ' y ')}"
+        return romance_number(hour12, ones, teens, tens, " y "), romance_number(minute, ['cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'], teens, tens, " y ")
     if language == "czech":
-        return f"{czech_number(now.hour)} {czech_number(minute)}"
+        return czech_number(now.hour), czech_number(minute)
     if language == "russian":
-        return f"{russian_number(now.hour)} {russian_number(minute)}"
+        return russian_number(now.hour), russian_number(minute)
     if language == "portuguese":
         ones = ["zero", "uma", "duas", "tres", "quatro", "cinco", "seis", "sete", "oito", "nove"]
         teens = {10: "dez", 11: "onze", 12: "doze", 13: "treze", 14: "catorze", 15: "quinze", 16: "dezesseis", 17: "dezessete", 18: "dezoito", 19: "dezenove"}
         tens = {2: "vinte", 3: "trinta", 4: "quarenta", 5: "cinquenta"}
-        return f"{romance_number(hour12, ones, teens, tens, ' e ')} {romance_number(minute, ['zero', 'um', 'dois', 'tres', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'], teens, tens, ' e ')}"
+        return romance_number(hour12, ones, teens, tens, " e "), romance_number(minute, ['zero', 'um', 'dois', 'tres', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'], teens, tens, " e ")
     if language == "japanese":
         hour_words = ["零時", "一時", "二時", "三時", "四時", "五時", "六時", "七時", "八時", "九時", "十時", "十一時", "十二時", "十三時", "十四時", "十五時", "十六時", "十七時", "十八時", "十九時", "二十時", "二十一時", "二十二時", "二十三時"]
-        return f"{hour_words[now.hour]} {minute}分"
+        return hour_words[now.hour], f"{minute}分"
     if language == "arabic":
-        return f"{now.hour} و {minute}"
+        return str(now.hour), str(minute)
     if language == "chinese":
         hour_words = ["零点", "一点", "二点", "三点", "四点", "五点", "六点", "七点", "八点", "九点", "十点", "十一点", "十二点", "十三点", "十四点", "十五点", "十六点", "十七点", "十八点", "十九点", "二十点", "二十一点", "二十二点", "二十三点"]
-        return f"{hour_words[now.hour]} {minute}分"
-    return f"{now.hour}:{minute:02d}"
+        return hour_words[now.hour], f"{minute}分"
+    return str(now.hour), f"{minute:02d}"
+
+
+def direct_word_clock_text(now: datetime, language: str) -> str:
+    line1, line2 = direct_word_clock_lines(now, language)
+    return f"{line1} {line2}".strip()
 
 
 def relative_word_clock_text(now: datetime, language: str) -> str:
@@ -890,31 +943,51 @@ def relative_word_clock_text(now: datetime, language: str) -> str:
     return direct_word_clock_text(now, language)
 
 
+def relative_word_clock_lines(now: datetime, language: str) -> tuple[str, str]:
+    text = relative_word_clock_text(now, language)
+    parts = text.split()
+    if len(parts) <= 1:
+        return text, ""
+    midpoint = max(1, len(parts) // 2)
+    return " ".join(parts[:midpoint]), " ".join(parts[midpoint:])
+
+
+def render_fitted_line(surface: pygame.Surface, text: str, font_style: str, language: str, color: tuple[int, int, int], center: tuple[int, int], max_width: int, max_height: int) -> None:
+    if not text:
+        return
+    size = max(24, min(max_height, max_width))
+    font = word_clock_font(size, font_style, language)
+    rendered = font.render(text, True, color)
+    while (rendered.get_width() > max_width or rendered.get_height() > max_height) and size > 18:
+        size -= 4
+        font = word_clock_font(size, font_style, language)
+        rendered = font.render(text, True, color)
+    surface.blit(rendered, rendered.get_rect(center=center))
+
+
 def draw_word_clock(surface: pygame.Surface, now: datetime, state: dict) -> None:
     width, height = surface.get_size()
     surface.fill((10, 9, 7))
-    frame = pygame.Rect(int(width * 0.06), int(height * 0.12), int(width * 0.88), int(height * 0.76))
-    pygame.draw.rect(surface, (22, 19, 15), frame, border_radius=24)
-    pygame.draw.rect(surface, (118, 100, 72), frame, 2, border_radius=24)
+    frame = pygame.Rect(int(width * 0.025), int(height * 0.025), int(width * 0.95), int(height * 0.95))
 
     language = state.get("wordClockLanguage", "english")
     style = state.get("wordClockStyle", "direct")
     font_style = state.get("wordClockFont", "classic-sans")
     if style == "relative" and language not in {"english", "german"}:
         style = "direct"
-    text = relative_word_clock_text(now, language) if style == "relative" else direct_word_clock_text(now, language)
+    line1, line2 = relative_word_clock_lines(now, language) if style == "relative" else direct_word_clock_lines(now, language)
     if language not in {"arabic", "japanese", "chinese"}:
-        text = text.upper()
+        line1 = line1.upper()
+        line2 = line2.upper()
 
-    max_size = max(28, min(width // 9, height // 5))
-    body_font = word_clock_font(max_size, font_style)
-    body = body_font.render(text, True, (245, 240, 228))
-    while body.get_width() > int(frame.width * 0.88) and max_size > 20:
-        max_size -= 4
-        body_font = word_clock_font(max_size, font_style)
-        body = body_font.render(text, True, (245, 240, 228))
-    body_rect = body.get_rect(center=frame.center)
-    surface.blit(body, body_rect)
+    text_color = (245, 240, 228)
+    line_gap = int(frame.height * 0.06)
+    line_height = int((frame.height - line_gap) * 0.44)
+    center_x = frame.centerx
+    line1_center_y = frame.y + int(frame.height * 0.31)
+    line2_center_y = frame.y + int(frame.height * 0.69)
+    render_fitted_line(surface, line1, font_style, language, text_color, (center_x, line1_center_y), int(frame.width * 0.96), line_height)
+    render_fitted_line(surface, line2, font_style, language, text_color, (center_x, line2_center_y), int(frame.width * 0.96), line_height)
 
 
 def main() -> int:

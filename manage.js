@@ -167,10 +167,8 @@ function populateWordClockSettings() {
 
   const fontLabels = {
     "classic-sans": "Classic Sans",
-    "serif-display": "Serif Display",
-    "cursive-italic": "Cursive / Italic",
     "urw-gothic-demi": "URW Gothic Demi",
-    "artsy-script": "Artsy Script",
+    "cursive-italic": "Cursive / Italic",
   };
   wordClockFont.innerHTML = "";
   (wordClockFonts.length ? wordClockFonts : ["classic-sans"]).forEach((mode) => {
