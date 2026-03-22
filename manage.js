@@ -6,9 +6,11 @@ const mode24 = document.getElementById("mode24");
 const saveSettings = document.getElementById("saveSettings");
 const statusText = document.getElementById("statusText");
 const displayMode = document.getElementById("displayMode");
+const rotationMode = document.getElementById("rotationMode");
 const graphicPanel = document.getElementById("graphicPanel");
 const worldPanel = document.getElementById("worldPanel");
 const airportPanel = document.getElementById("airportPanel");
+const lichtzeitpegelPanel = document.getElementById("lichtzeitpegelPanel");
 const homeLocationSelect = document.getElementById("homeLocationSelect");
 const applyHomeLocation = document.getElementById("applyHomeLocation");
 const clearHomeLocation = document.getElementById("clearHomeLocation");
@@ -25,11 +27,14 @@ const countryFilter = document.getElementById("countryFilter");
 const citySelect = document.getElementById("citySelect");
 const addDestination = document.getElementById("addDestination");
 const destinationList = document.getElementById("destinationList");
+const airportUnits = document.getElementById("airportUnits");
 
 let currentState = null;
 let currentPhotos = [];
 let currentCities = [];
 let maxAirportDestinations = 6;
+let currentRotationModes = [];
+let currentAirportUnitModes = [];
 
 function setStatus(message) {
   statusText.textContent = message;
@@ -64,10 +69,42 @@ function cityOptionById(cityId) {
 }
 
 function populateDisplayMode() {
-  const modes = ["graphic", "world-daylight", "airport-board"];
+  const modes = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel"];
   displayMode.innerHTML = "";
   modes.forEach((mode) => displayMode.appendChild(createOption(mode, mode)));
   displayMode.value = currentState.displayMode;
+}
+
+function rotationLabel(mode) {
+  const labels = {
+    landscape: "Landscape",
+    portrait: "Portrait",
+    "landscape-flipped": "Landscape Flipped",
+    "portrait-flipped": "Portrait Flipped",
+  };
+  return labels[mode] || mode;
+}
+
+function populateRotationMode() {
+  const modes = currentRotationModes.length ? currentRotationModes : ["portrait"];
+  rotationMode.innerHTML = "";
+  modes.forEach((mode) => rotationMode.appendChild(createOption(mode, rotationLabel(mode))));
+  rotationMode.value = currentState.rotation || "portrait";
+}
+
+function airportUnitLabel(mode) {
+  const labels = {
+    imperial: "Miles + Fahrenheit",
+    metric: "Kilometers + Celsius",
+  };
+  return labels[mode] || mode;
+}
+
+function populateAirportUnits() {
+  const modes = currentAirportUnitModes.length ? currentAirportUnitModes : ["imperial", "metric"];
+  airportUnits.innerHTML = "";
+  modes.forEach((mode) => airportUnits.appendChild(createOption(mode, airportUnitLabel(mode))));
+  airportUnits.value = currentState.airportUnits || "imperial";
 }
 
 function populateCountryFilter() {
@@ -98,6 +135,7 @@ function updateModePanels() {
   graphicPanel.hidden = mode !== "graphic";
   worldPanel.hidden = mode !== "world-daylight";
   airportPanel.hidden = mode !== "airport-board";
+  lichtzeitpegelPanel.hidden = mode !== "lichtzeitpegel";
 }
 
 function updateHomeLocationStatus() {
@@ -228,11 +266,15 @@ async function fetchState() {
   currentState = payload.state;
   currentPhotos = payload.photos;
   currentCities = payload.cities;
+  currentRotationModes = payload.rotationModes || [];
+  currentAirportUnitModes = payload.airportUnitModes || [];
   maxAirportDestinations = payload.maxAirportDestinations || 6;
 
   showAnalog.checked = payload.state.showAnalog !== false;
   mode24.checked = payload.state.mode24 !== false;
   populateDisplayMode();
+  populateRotationMode();
+  populateAirportUnits();
   populateCountryFilter();
   populateCitySelect();
   populateHomeLocationSelect();
@@ -287,6 +329,8 @@ async function saveDisplaySettings() {
   setStatus("Saving display settings...");
   await updateState({
     displayMode: displayMode.value,
+    rotation: rotationMode.value,
+    airportUnits: airportUnits.value,
     showAnalog: showAnalog.checked,
     mode24: mode24.checked
   }, "Display settings saved.");

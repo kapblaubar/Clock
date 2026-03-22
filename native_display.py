@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,7 @@ DEFAULT_STATE = {
     "showAnalog": True,
     "mode24": True,
     "rotation": "portrait",
+    "airportUnits": "imperial",
     "airportDestinations": ["nyc-us"],
     "homeLocation": None,
     "customPlaces": [],
@@ -31,6 +34,8 @@ ALLOWED_EXTENSIONS = {".gif", ".webp", ".png", ".jpg", ".jpeg", ".avif"}
 STATE_POLL_MS = 3000
 IDLE_FPS = 4
 WORLD_POLL_FPS = 2
+WEATHER_REFRESH_SECONDS = 900
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 
 
 @dataclass
@@ -62,6 +67,12 @@ class MediaPlayer:
         return self.current
 
 
+@dataclass
+class WeatherSnapshot:
+    temperature: int | None
+    summary: str
+
+
 def load_json(path: Path, fallback):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -84,6 +95,99 @@ def load_cities() -> list[dict]:
 
 def city_lookup() -> dict[str, dict]:
     return {city["id"]: city for city in load_cities()}
+
+
+def weather_summary_from_code(code: int | None) -> str:
+    if code == 0:
+        return "Clear"
+    if code in {1, 2, 3}:
+        return "Cloudy"
+    if code in {45, 48}:
+        return "Fog"
+    if code in {51, 53, 55, 56, 57}:
+        return "Drizzle"
+    if code in {61, 63, 65, 66, 67, 80, 81, 82}:
+        return "Rainy"
+    if code in {71, 73, 75, 77, 85, 86}:
+        return "Snow"
+    if code in {95, 96, 99}:
+        return "Storm"
+    return "Mixed"
+
+
+def normalize_weather_payload(payload) -> list[dict]:
+    if isinstance(payload, list):
+        return [entry for entry in payload if isinstance(entry, dict)]
+    if isinstance(payload, dict):
+        return [payload]
+    return []
+
+
+def fetch_weather_for_cities(selected_cities: list[dict], airport_units: str) -> dict[str, WeatherSnapshot]:
+    if not selected_cities:
+        return {}
+
+    params = {
+        "latitude": ",".join(str(city["lat"]) for city in selected_cities),
+        "longitude": ",".join(str(city["lon"]) for city in selected_cities),
+        "current": "temperature_2m,weather_code",
+        "temperature_unit": "celsius" if airport_units == "metric" else "fahrenheit",
+        "timezone": "auto",
+    }
+    url = f"{OPEN_METEO_URL}?{urllib.parse.urlencode(params)}"
+    request = urllib.request.Request(url, headers={"User-Agent": "ClockDisplay/1.0"})
+
+    with urllib.request.urlopen(request, timeout=10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    weather_by_city: dict[str, WeatherSnapshot] = {}
+    for city, entry in zip(selected_cities, normalize_weather_payload(payload), strict=False):
+        current = entry.get("current", {}) if isinstance(entry, dict) else {}
+        temperature = current.get("temperature_2m")
+        weather_code = current.get("weather_code")
+        try:
+            temperature_f = int(round(float(temperature)))
+        except (TypeError, ValueError):
+            temperature_f = None
+        try:
+            weather_code_value = int(weather_code)
+        except (TypeError, ValueError):
+            weather_code_value = None
+        weather_by_city[city["id"]] = WeatherSnapshot(
+            temperature=temperature_f,
+            summary=weather_summary_from_code(weather_code_value),
+        )
+    return weather_by_city
+
+
+def selected_destination_cities(state: dict, cities: dict[str, dict]) -> list[dict]:
+    selected = []
+    for destination_id in state.get("airportDestinations") or []:
+        city = cities.get(destination_id)
+        if city:
+            selected.append(city)
+    return selected
+
+
+def refresh_weather_cache(
+    state: dict,
+    cities: dict[str, dict],
+    cache: dict[str, WeatherSnapshot],
+    last_fetch_monotonic: float,
+    now_monotonic: float,
+    last_units: str,
+) -> tuple[dict[str, WeatherSnapshot], float, str]:
+    if state.get("displayMode") != "airport-board":
+        return cache, last_fetch_monotonic, last_units
+    airport_units = state.get("airportUnits", "imperial")
+    if cache and airport_units == last_units and now_monotonic - last_fetch_monotonic < WEATHER_REFRESH_SECONDS:
+        return cache, last_fetch_monotonic, last_units
+
+    try:
+        updated = fetch_weather_for_cities(selected_destination_cities(state, cities), airport_units)
+    except Exception:
+        return cache, last_fetch_monotonic, last_units
+    return updated, now_monotonic, airport_units
 
 
 def resolve_asset(path_value: str | None) -> Path | None:
@@ -196,12 +300,16 @@ def initialize_display() -> pygame.Surface:
     return pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 
 
-def compute_layout(screen_size: tuple[int, int], rotation: str, display_mode: str) -> tuple[tuple[int, int], bool]:
+def compute_layout(screen_size: tuple[int, int], rotation: str) -> tuple[tuple[int, int], int]:
     screen_w, screen_h = screen_size
-    rotate = rotation == "portrait" and display_mode == "graphic" and screen_w > screen_h
-    if rotate:
-        return (screen_h, screen_w), True
-    return (screen_w, screen_h), False
+    if rotation in {"portrait", "portrait-flipped"} and screen_w > screen_h:
+        angle = -90 if rotation == "portrait" else 90
+        return (screen_h, screen_w), angle
+    if rotation == "landscape-flipped":
+        return (screen_w, screen_h), 180
+    if rotation == "portrait-flipped":
+        return (screen_w, screen_h), 180
+    return (screen_w, screen_h), 0
 
 
 def draw_graphic_mode(surface: pygame.Surface, state: dict, media: MediaPlayer, now: datetime, font: pygame.font.Font) -> None:
@@ -287,19 +395,44 @@ def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float
     return 2 * radius_miles * math.asin(math.sqrt(a))
 
 
-def draw_airport_board(surface: pygame.Surface, state: dict, now: datetime, cities: dict[str, dict]) -> None:
+def format_distance(home: dict | None, city: dict, airport_units: str) -> str:
+    if not home:
+        return "SET HOME"
+    distance_miles = haversine_miles(home["lat"], home["lon"], city["lat"], city["lon"])
+    if airport_units == "metric":
+        return f"{distance_miles * 1.60934:,.0f} KM"
+    return f"{distance_miles:,.0f} MI"
+
+
+def format_weather(weather: WeatherSnapshot | None, airport_units: str) -> str:
+    if not weather:
+        return "--"
+    unit = "C" if airport_units == "metric" else "F"
+    if weather.temperature is None:
+        return weather.summary.upper()
+    return f"{weather.temperature}{unit} {weather.summary.upper()}"
+
+
+def draw_airport_board(
+    surface: pygame.Surface,
+    state: dict,
+    now: datetime,
+    cities: dict[str, dict],
+    weather_cache: dict[str, WeatherSnapshot],
+) -> None:
     width, height = surface.get_size()
     surface.fill((17, 14, 11))
-    board = pygame.Rect(int(width * 0.06), int(height * 0.10), int(width * 0.88), int(height * 0.72))
+    board = pygame.Rect(int(width * 0.04), int(height * 0.10), int(width * 0.92), int(height * 0.72))
     pygame.draw.rect(surface, (22, 19, 15), board, border_radius=20)
     pygame.draw.rect(surface, (83, 69, 53), board, 2, border_radius=20)
 
     header_font = pygame.font.SysFont("Courier New", max(26, width // 32), bold=True)
-    row_font = pygame.font.SysFont("Courier New", max(22, width // 40), bold=True)
+    row_font = pygame.font.SysFont("Courier New", max(18, width // 54), bold=True)
     local_font = pygame.font.SysFont("Courier New", max(42, width // 18), bold=True)
 
     destination_ids = state.get("airportDestinations") or []
     home = state.get("homeLocation") or None
+    airport_units = state.get("airportUnits", "imperial")
     header = header_font.render("AIRPORT BOARD", True, (250, 228, 167))
     home_text = header_font.render(f"HOME  {home.get('city', 'NOT SET').upper()}" if home else "HOME  NOT SET", True, (196, 177, 139))
     surface.blit(header, (board.x + 18, board.y + 18))
@@ -307,8 +440,8 @@ def draw_airport_board(surface: pygame.Surface, state: dict, now: datetime, citi
 
     columns = [
         ("CITY", board.x + 26),
-        ("DISTANCE", board.x + int(board.width * 0.48)),
-        ("LOCAL TIME", board.x + int(board.width * 0.72)),
+        ("DISTANCE", board.x + int(board.width * 0.38)),
+        ("LOCAL TIME · WEATHER", board.x + int(board.width * 0.58)),
     ]
     column_y = board.y + 76
     for label, x in columns:
@@ -329,21 +462,116 @@ def draw_airport_board(surface: pygame.Surface, state: dict, now: datetime, citi
             pygame.draw.rect(surface, (34, 26, 21), row_rect, border_radius=8)
             pygame.draw.rect(surface, (60, 51, 44), row_rect, 1, border_radius=8)
             city_text = row_font.render(city["city"].upper(), True, (255, 240, 196))
-            if home:
-                distance_value = f"{haversine_miles(home['lat'], home['lon'], city['lat'], city['lon']):,.0f} MI"
-            else:
-                distance_value = "SET HOME"
+            distance_value = format_distance(home, city, airport_units)
             distance_text = row_font.render(distance_value, True, (255, 240, 196))
-            local_time_text = row_font.render(datetime.now(ZoneInfo(city["timezone"])).strftime("%H:%M:%S"), True, (255, 240, 196))
+            local_time_value = datetime.now(ZoneInfo(city["timezone"])).strftime("%H:%M:%S")
+            weather = weather_cache.get(destination_id)
+            local_weather_text = row_font.render(
+                f"{local_time_value}  {format_weather(weather, airport_units)}",
+                True,
+                (255, 240, 196),
+            )
             surface.blit(city_text, (board.x + 26, row_y + 12))
-            surface.blit(distance_text, (board.x + int(board.width * 0.48), row_y + 12))
-            surface.blit(local_time_text, (board.x + int(board.width * 0.72), row_y + 12))
+            surface.blit(distance_text, (board.x + int(board.width * 0.38), row_y + 12))
+            surface.blit(local_weather_text, (board.x + int(board.width * 0.58), row_y + 12))
             row_y += row_h + 10
 
     footer_label = header_font.render("PI LOCAL TIME", True, (196, 177, 139))
     footer_time = local_font.render(now.strftime("%H:%M:%S"), True, (255, 240, 196))
     surface.blit(footer_label, (board.x + 18, board.bottom + 20))
     surface.blit(footer_time, (board.x + 18, board.bottom + 56))
+
+
+def draw_bar_group(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    label: str,
+    value: int,
+    max_value: int,
+    title_font: pygame.font.Font,
+    meta_font: pygame.font.Font,
+) -> None:
+    pygame.draw.rect(surface, (18, 16, 12), rect, border_radius=18)
+    pygame.draw.rect(surface, (86, 72, 50), rect, 2, border_radius=18)
+
+    label_text = title_font.render(label, True, (238, 218, 166))
+    value_text = meta_font.render(str(value), True, (165, 149, 112))
+    surface.blit(label_text, (rect.x + 18, rect.y + 12))
+    surface.blit(value_text, (rect.right - value_text.get_width() - 18, rect.y + 16))
+
+    band_area = pygame.Rect(rect.x + 18, rect.y + 52, rect.width - 36, rect.height - 68)
+    gap = max(4, band_area.height // max(18, max_value * 3))
+    band_height = max(8, (band_area.height - gap * (max_value - 1)) // max_value)
+    total_height = band_height * max_value + gap * (max_value - 1)
+    start_y = band_area.bottom - total_height
+
+    for index in range(max_value):
+        band_rect = pygame.Rect(
+            band_area.x,
+            start_y + index * (band_height + gap),
+            band_area.width,
+            band_height,
+        )
+        is_active = index >= max_value - value
+        fill = (241, 183, 73) if is_active else (54, 46, 34)
+        edge = (255, 216, 132) if is_active else (78, 64, 44)
+        pygame.draw.rect(surface, fill, band_rect, border_radius=min(10, band_height // 2))
+        pygame.draw.rect(surface, edge, band_rect, 1, border_radius=min(10, band_height // 2))
+
+
+def draw_lichtzeitpegel(surface: pygame.Surface, now: datetime) -> None:
+    width, height = surface.get_size()
+    surface.fill((8, 7, 5))
+
+    title_font = pygame.font.SysFont("Georgia", max(26, width // 18), bold=True)
+    subtitle_font = pygame.font.SysFont("Georgia", max(16, width // 34))
+    label_font = pygame.font.SysFont("Arial", max(20, width // 24), bold=True)
+    meta_font = pygame.font.SysFont("Arial", max(18, width // 30))
+
+    title = title_font.render("LICHTZEITPEGEL", True, (243, 225, 180))
+    subtitle = subtitle_font.render("H h M m S s  ·  24-hour tower clock bands", True, (164, 145, 107))
+    surface.blit(title, title.get_rect(center=(width // 2, int(height * 0.06))))
+    surface.blit(subtitle, subtitle.get_rect(center=(width // 2, int(height * 0.11))))
+
+    digits = [
+        ("H", now.hour // 10, 2),
+        ("h", now.hour % 10, 9),
+        ("M", now.minute // 10, 5),
+        ("m", now.minute % 10, 9),
+        ("S", now.second // 10, 5),
+        ("s", now.second % 10, 9),
+    ]
+
+    portrait = height >= width
+    if portrait:
+        outer = pygame.Rect(int(width * 0.10), int(height * 0.16), int(width * 0.80), int(height * 0.76))
+        gap = max(10, outer.height // 48)
+        group_height = (outer.height - gap * (len(digits) - 1)) // len(digits)
+        for index, (label, value, max_value) in enumerate(digits):
+            rect = pygame.Rect(outer.x, outer.y + index * (group_height + gap), outer.width, group_height)
+            draw_bar_group(surface, rect, label, value, max_value, label_font, meta_font)
+    else:
+        outer = pygame.Rect(int(width * 0.06), int(height * 0.18), int(width * 0.88), int(height * 0.70))
+        cols = 3
+        rows = 2
+        gap_x = max(12, outer.width // 40)
+        gap_y = max(12, outer.height // 20)
+        group_width = (outer.width - gap_x * (cols - 1)) // cols
+        group_height = (outer.height - gap_y * (rows - 1)) // rows
+        for index, (label, value, max_value) in enumerate(digits):
+            row = index // cols
+            col = index % cols
+            rect = pygame.Rect(
+                outer.x + col * (group_width + gap_x),
+                outer.y + row * (group_height + gap_y),
+                group_width,
+                group_height,
+            )
+            draw_bar_group(surface, rect, label, value, max_value, label_font, meta_font)
+
+    footer_font = pygame.font.SysFont("Arial", max(24, width // 22), bold=True)
+    footer = footer_font.render(now.strftime("%H:%M:%S"), True, (243, 225, 180))
+    surface.blit(footer, footer.get_rect(center=(width // 2, int(height * 0.95))))
 
 
 def main() -> int:
@@ -355,11 +583,14 @@ def main() -> int:
 
     cities = city_lookup()
     state = load_state()
-    logical_size, rotate_output = compute_layout(screen.get_size(), state.get("rotation", "portrait"), state.get("displayMode", "graphic"))
+    logical_size, rotation_angle = compute_layout(screen.get_size(), state.get("rotation", "portrait"))
     work_surface = pygame.Surface(logical_size).convert()
     graphic_font = pygame.font.SysFont("Arial", max(32, logical_size[0] // 18))
     media = MediaPlayer(load_media(resolve_asset(state.get("defaultPhoto")), logical_size))
     world_map_cache = load_world_map((int(logical_size[0] * 0.92), int(logical_size[1] * 0.68)))
+    weather_cache: dict[str, WeatherSnapshot] = {}
+    last_weather_fetch = 0.0
+    last_weather_units = state.get("airportUnits", "imperial")
 
     state_signature = json.dumps(state, sort_keys=True)
     next_state_poll = 0
@@ -374,6 +605,14 @@ def main() -> int:
                 return 0
 
         now_ms = pygame.time.get_ticks()
+        weather_cache, last_weather_fetch, last_weather_units = refresh_weather_cache(
+            state,
+            cities,
+            weather_cache,
+            last_weather_fetch,
+            now_ms / 1000,
+            last_weather_units,
+        )
         if now_ms >= next_state_poll:
             next_state_poll = now_ms + STATE_POLL_MS
             latest_state = load_state()
@@ -381,12 +620,15 @@ def main() -> int:
             if latest_signature != state_signature:
                 state = latest_state
                 state_signature = latest_signature
-                logical_size, rotate_output = compute_layout(screen.get_size(), state.get("rotation", "portrait"), state.get("displayMode", "graphic"))
+                logical_size, rotation_angle = compute_layout(screen.get_size(), state.get("rotation", "portrait"))
                 work_surface = pygame.Surface(logical_size).convert()
                 graphic_font = pygame.font.SysFont("Arial", max(32, logical_size[0] // 18))
                 media = MediaPlayer(load_media(resolve_asset(state.get("defaultPhoto")), logical_size))
                 world_map_cache = load_world_map((int(logical_size[0] * 0.92), int(logical_size[1] * 0.68)))
                 cities = city_lookup()
+                weather_cache = {}
+                last_weather_fetch = 0.0
+                last_weather_units = state.get("airportUnits", "imperial")
                 last_second = -1
                 needs_render = True
 
@@ -406,11 +648,13 @@ def main() -> int:
             elif mode == "world-daylight":
                 draw_world_daylight(work_surface, now, world_map_cache)
             elif mode == "airport-board":
-                draw_airport_board(work_surface, state, now, cities)
+                draw_airport_board(work_surface, state, now, cities, weather_cache)
+            elif mode == "lichtzeitpegel":
+                draw_lichtzeitpegel(work_surface, now)
 
             screen.fill((0, 0, 0))
-            if rotate_output:
-                rotated = pygame.transform.rotate(work_surface, -90)
+            if rotation_angle:
+                rotated = pygame.transform.rotate(work_surface, rotation_angle)
                 rect = rotated.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
                 screen.blit(rotated, rect)
             else:

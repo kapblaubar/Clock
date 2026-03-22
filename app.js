@@ -95,8 +95,17 @@ function drawAnalogClock(now) {
 }
 
 function applyRotation() {
-  const rotatePortrait = state.rotation === "portrait" && window.innerWidth > window.innerHeight;
-  document.body.classList.toggle("rotate-portrait", rotatePortrait);
+  const classes = ["rotate-portrait", "rotate-portrait-flipped", "rotate-landscape-flipped"];
+  document.body.classList.remove(...classes);
+  if (state.rotation === "portrait" && window.innerWidth > window.innerHeight) {
+    document.body.classList.add("rotate-portrait");
+  } else if (state.rotation === "portrait-flipped" && window.innerWidth > window.innerHeight) {
+    document.body.classList.add("rotate-portrait-flipped");
+  } else if (state.rotation === "landscape-flipped") {
+    document.body.classList.add("rotate-landscape-flipped");
+  } else if (state.rotation === "portrait-flipped") {
+    document.body.classList.add("rotate-landscape-flipped");
+  }
   resizeCanvas();
 }
 

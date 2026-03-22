@@ -13,5 +13,18 @@
   {"id": "cpt-za", "country": "South Africa", "city": "Cape Town", "lat": -33.9249, "lon": 18.4241, "timezone": "Africa/Johannesburg"},
   {"id": "gru-br", "country": "Brazil", "city": "Sao Paulo", "lat": -23.5505, "lon": -46.6333, "timezone": "America/Sao_Paulo"},
   {"id": "mex-mx", "country": "Mexico", "city": "Mexico City", "lat": 19.4326, "lon": -99.1332, "timezone": "America/Mexico_City"},
-  {"id": "rey-is", "country": "Iceland", "city": "Reykjavik", "lat": 64.1466, "lon": -21.9426, "timezone": "Atlantic/Reykjavik"}
+  {"id": "rey-is", "country": "Iceland", "city": "Reykjavik", "lat": 64.1466, "lon": -21.9426, "timezone": "Atlantic/Reykjavik"},
+  {"id": "mad-es", "country": "Spain", "city": "Madrid", "lat": 40.4168, "lon": -3.7038, "timezone": "Europe/Madrid"},
+  {"id": "lis-pt", "country": "Portugal", "city": "Lisbon", "lat": 38.7223, "lon": -9.1393, "timezone": "Europe/Lisbon"},
+  {"id": "brs-gb", "country": "United Kingdom", "city": "Bristol", "lat": 51.4545, "lon": -2.5879, "timezone": "Europe/London"},
+  {"id": "cgn-de", "country": "Germany", "city": "Cologne", "lat": 50.9375, "lon": 6.9603, "timezone": "Europe/Berlin"},
+  {"id": "mow-ru", "country": "Russia", "city": "Moscow", "lat": 55.7558, "lon": 37.6173, "timezone": "Europe/Moscow"},
+  {"id": "den-us", "country": "United States", "city": "Denver", "lat": 39.7392, "lon": -104.9903, "timezone": "America/Denver"},
+  {"id": "sea-us", "country": "United States", "city": "Seattle", "lat": 47.6062, "lon": -122.3321, "timezone": "America/Los_Angeles"},
+  {"id": "rom-it", "country": "Italy", "city": "Rome", "lat": 41.9028, "lon": 12.4964, "timezone": "Europe/Rome"},
+  {"id": "acc-gh", "country": "Ghana", "city": "Accra", "lat": 5.6037, "lon": -0.1870, "timezone": "Africa/Accra"},
+  {"id": "nbo-ke", "country": "Kenya", "city": "Nairobi", "lat": -1.2921, "lon": 36.8219, "timezone": "Africa/Nairobi"},
+  {"id": "cai-eg", "country": "Egypt", "city": "Cairo", "lat": 30.0444, "lon": 31.2357, "timezone": "Africa/Cairo"},
+  {"id": "rak-ma", "country": "Morocco", "city": "Marrakesh", "lat": 31.6295, "lon": -7.9811, "timezone": "Africa/Casablanca"},
+  {"id": "ibz-es", "country": "Spain", "city": "Ibiza", "lat": 38.9067, "lon": 1.4206, "timezone": "Europe/Madrid"}
 ]

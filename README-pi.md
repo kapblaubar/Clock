@@ -7,6 +7,7 @@ This project now supports multiple display modes with a stable management backen
 - `graphic`: the existing photo/GIF clock screen
 - `world-daylight`: a flat world map with daylight shading in UTC
 - `airport-board`: a departures-style board showing up to 6 destinations using `City | Distance | Local Time`
+- `lichtzeitpegel`: a six-group 24-hour band clock showing `H h M m S s`
 
 ## Airport-board model
 

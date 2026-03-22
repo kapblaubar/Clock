@@ -51,6 +51,18 @@
       transform: translate(-50%, -50%) rotate(90deg);
     }
 
+    body.rotate-portrait-flipped #stage {
+      width: 100vh;
+      height: 100vw;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(270deg);
+    }
+
+    body.rotate-landscape-flipped #stage {
+      transform: rotate(180deg);
+    }
+
     #photoLayer {
       position: absolute;
       inset: 0;

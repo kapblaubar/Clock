@@ -210,12 +210,14 @@
       <h2>Display Mode</h2>
       <div class="field-row">
         <select id="displayMode"></select>
+        <select id="rotationMode"></select>
         <button id="saveSettings" type="button">Save Display Settings</button>
       </div>
       <div class="toggles">
         <label><input id="showAnalog" type="checkbox" checked /> Show analog clock</label>
         <label><input id="mode24" type="checkbox" checked /> 24 hour clock</label>
       </div>
+      <p class="field-note">Orientation controls the screen transform. Use a flipped option for displays mounted upside down.</p>
       <div id="graphicPanel" class="mode-panel">
         <h3>Graphic Screen Type</h3>
         <p class="field-note">Use the image library below to pick the background for the graphic clock mode.</p>
@@ -261,7 +263,10 @@
               <select id="citySelect"></select>
               <button id="addDestination" type="button">Add Destination</button>
             </div>
-            <p class="field-note">Select up to six destinations. The display will show: City | Distance | Local Time.</p>
+            <div class="field-row">
+              <select id="airportUnits"></select>
+            </div>
+            <p class="field-note">Select up to six destinations. The display shows city, distance, and local time with current temperature and sky condition.</p>
           </div>
           <div class="stack">
             <h3>Selected Destinations</h3>
@@ -272,6 +277,10 @@
           <h3>Saved Places</h3>
           <div id="customPlacesList" class="list-grid"></div>
         </div>
+      </div>
+      <div id="lichtzeitpegelPanel" class="mode-panel" hidden>
+        <h3>LichtZeitPegel</h3>
+        <p class="field-note">A six-group 24-hour bar clock inspired by the Dusseldorf tower clock. The groups represent H h M m S s, where each digit lights one band per value and zero stays empty.</p>
       </div>
       <p class="meta" id="statusText">Ready.</p>
     </section>

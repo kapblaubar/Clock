@@ -17,7 +17,9 @@ INDEX_PATH = BASE_DIR / "index.html"
 MANAGE_PATH = BASE_DIR / "manage.html"
 
 ALLOWED_EXTENSIONS = {".gif", ".webp", ".png", ".jpg", ".jpeg", ".avif"}
-DISPLAY_MODES = ["graphic", "world-daylight", "airport-board"]
+DISPLAY_MODES = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel"]
+ROTATION_MODES = ["landscape", "portrait", "landscape-flipped", "portrait-flipped"]
+AIRPORT_UNIT_MODES = ["imperial", "metric"]
 MAX_AIRPORT_DESTINATIONS = 6
 DEFAULT_STATE = {
     "displayMode": "graphic",
@@ -25,6 +27,7 @@ DEFAULT_STATE = {
     "showAnalog": True,
     "mode24": True,
     "rotation": "portrait",
+    "airportUnits": "imperial",
     "airportDestinations": ["nyc-us"],
     "homeLocation": None,
     "customPlaces": [],
@@ -57,6 +60,10 @@ def load_state() -> dict:
     state.update(data)
     if state.get("displayMode") not in DISPLAY_MODES:
         state["displayMode"] = DEFAULT_STATE["displayMode"]
+    if state.get("rotation") not in ROTATION_MODES:
+        state["rotation"] = DEFAULT_STATE["rotation"]
+    if state.get("airportUnits") not in AIRPORT_UNIT_MODES:
+        state["airportUnits"] = DEFAULT_STATE["airportUnits"]
     state["airportDestinations"] = [
         destination for destination in list(state.get("airportDestinations") or [])[:MAX_AIRPORT_DESTINATIONS]
         if isinstance(destination, str) and city_exists(destination)
@@ -177,6 +184,8 @@ def api_state():
         "photos": photos,
         "cities": load_cities(),
         "displayModes": DISPLAY_MODES,
+        "rotationModes": ROTATION_MODES,
+        "airportUnitModes": AIRPORT_UNIT_MODES,
         "maxAirportDestinations": MAX_AIRPORT_DESTINATIONS,
     })
 
@@ -197,6 +206,18 @@ def update_state():
         if not photo_exists(value):
             return jsonify({"error": "Photo not found"}), 404
         state["defaultPhoto"] = value
+
+    if "rotation" in payload:
+        rotation = str(payload["rotation"])
+        if rotation not in ROTATION_MODES:
+            return jsonify({"error": "Unsupported rotation mode"}), 400
+        state["rotation"] = rotation
+
+    if "airportUnits" in payload:
+        airport_units = str(payload["airportUnits"])
+        if airport_units not in AIRPORT_UNIT_MODES:
+            return jsonify({"error": "Unsupported airport unit mode"}), 400
+        state["airportUnits"] = airport_units
 
     if "airportDestinations" in payload:
         incoming = payload["airportDestinations"]
