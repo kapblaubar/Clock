@@ -39,6 +39,11 @@ const wordClockPanel = document.getElementById("wordClockPanel");
 const wordClockLanguage = document.getElementById("wordClockLanguage");
 const wordClockStyle = document.getElementById("wordClockStyle");
 const wordClockFont = document.getElementById("wordClockFont");
+const eventClockPanel = document.getElementById("eventClockPanel");
+const eventClockLanguage = document.getElementById("eventClockLanguage");
+const eventClockType = document.getElementById("eventClockType");
+const eventClockCount = document.getElementById("eventClockCount");
+const eventClockFont = document.getElementById("eventClockFont");
 
 let currentState = null;
 let currentPhotos = [];
@@ -51,6 +56,8 @@ let lichtzeitpegelColorModes = [];
 let wordClockLanguages = [];
 let wordClockStyles = [];
 let wordClockFonts = [];
+let eventClockTypes = [];
+let eventClockCounts = [];
 
 function setStatus(message) {
   statusText.textContent = message;
@@ -85,7 +92,7 @@ function cityOptionById(cityId) {
 }
 
 function populateDisplayMode() {
-  const modes = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock"];
+  const modes = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock", "event-clock"];
   displayMode.innerHTML = "";
   modes.forEach((mode) => displayMode.appendChild(createOption(mode, mode)));
   displayMode.value = currentState.displayMode;
@@ -177,6 +184,37 @@ function populateWordClockSettings() {
   wordClockFont.value = currentState.wordClockFont || "classic-sans";
 }
 
+function populateEventClockSettings() {
+  eventClockLanguage.innerHTML = "";
+  (wordClockLanguages.length ? wordClockLanguages : ["english"]).forEach((mode) => {
+    eventClockLanguage.appendChild(createOption(mode, mode));
+  });
+  eventClockLanguage.value = currentState.eventClockLanguage || "english";
+
+  eventClockType.innerHTML = "";
+  (eventClockTypes.length ? eventClockTypes : ["events", "selected"]).forEach((mode) => {
+    eventClockType.appendChild(createOption(mode, mode));
+  });
+  eventClockType.value = currentState.eventClockType || "events";
+
+  eventClockCount.innerHTML = "";
+  (eventClockCounts.length ? eventClockCounts : [1, 2, 3, 4]).forEach((count) => {
+    eventClockCount.appendChild(createOption(String(count), String(count)));
+  });
+  eventClockCount.value = String(currentState.eventClockCount || 3);
+
+  const fontLabels = {
+    "classic-sans": "Classic Sans",
+    "urw-gothic-demi": "URW Gothic Demi",
+    "cursive-italic": "Cursive / Italic",
+  };
+  eventClockFont.innerHTML = "";
+  (wordClockFonts.length ? wordClockFonts : ["classic-sans"]).forEach((mode) => {
+    eventClockFont.appendChild(createOption(mode, fontLabels[mode] || mode));
+  });
+  eventClockFont.value = currentState.eventClockFont || "classic-sans";
+}
+
 function populateCountryFilter() {
   const countries = countriesFromCities();
   countryFilter.innerHTML = "";
@@ -207,6 +245,7 @@ function updateModePanels() {
   airportPanel.hidden = mode !== "airport-board";
   lichtzeitpegelPanel.hidden = mode !== "lichtzeitpegel";
   wordClockPanel.hidden = mode !== "word-clock";
+  eventClockPanel.hidden = mode !== "event-clock";
 }
 
 function updateHomeLocationStatus() {
@@ -343,6 +382,8 @@ async function fetchState() {
   wordClockLanguages = payload.wordClockLanguages || [];
   wordClockStyles = payload.wordClockStyles || [];
   wordClockFonts = payload.wordClockFonts || [];
+  eventClockTypes = payload.eventClockTypes || [];
+  eventClockCounts = payload.eventClockCounts || [];
   maxAirportDestinations = payload.maxAirportDestinations || 6;
   airportRotateSecondsRange = payload.airportRotateSecondsRange || airportRotateSecondsRange;
 
@@ -356,6 +397,7 @@ async function fetchState() {
   populateAirportUnits();
   populateLichtzeitpegelColors();
   populateWordClockSettings();
+  populateEventClockSettings();
   populateCountryFilter();
   populateCitySelect();
   populateHomeLocationSelect();
@@ -416,6 +458,10 @@ async function saveDisplaySettings() {
     wordClockLanguage: wordClockLanguage.value,
     wordClockStyle: wordClockStyle.value,
     wordClockFont: wordClockFont.value,
+    eventClockLanguage: eventClockLanguage.value,
+    eventClockType: eventClockType.value,
+    eventClockCount: Number(eventClockCount.value || 3),
+    eventClockFont: eventClockFont.value,
     lichtzeitpegelColors: {
       H: lichtColorH.value,
       h: lichtColorh.value,

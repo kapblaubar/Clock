@@ -17,13 +17,15 @@ INDEX_PATH = BASE_DIR / "index.html"
 MANAGE_PATH = BASE_DIR / "manage.html"
 
 ALLOWED_EXTENSIONS = {".gif", ".webp", ".png", ".jpg", ".jpeg", ".avif"}
-DISPLAY_MODES = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock"]
+DISPLAY_MODES = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock", "event-clock"]
 ROTATION_MODES = ["landscape", "portrait", "landscape-flipped", "portrait-flipped"]
 AIRPORT_UNIT_MODES = ["imperial", "metric"]
 LICHTZEITPEGEL_COLOR_MODES = ["amber", "red", "green", "blue", "purple", "white"]
 WORD_CLOCK_LANGUAGES = ["english", "german", "french", "spanish", "czech", "russian", "portuguese", "japanese", "arabic", "chinese"]
 WORD_CLOCK_STYLES = ["direct", "relative"]
 WORD_CLOCK_FONTS = ["classic-sans", "urw-gothic-demi", "cursive-italic"]
+EVENT_CLOCK_TYPES = ["events", "selected", "births", "deaths", "holidays"]
+EVENT_CLOCK_COUNTS = [1, 2, 3, 4]
 MAX_AIRPORT_DESTINATIONS = 12
 MIN_AIRPORT_ROTATE_SECONDS = 15
 MAX_AIRPORT_ROTATE_SECONDS = 3600
@@ -38,6 +40,10 @@ DEFAULT_STATE = {
     "wordClockLanguage": "english",
     "wordClockStyle": "direct",
     "wordClockFont": "classic-sans",
+    "eventClockLanguage": "english",
+    "eventClockFont": "classic-sans",
+    "eventClockType": "events",
+    "eventClockCount": 3,
     "lichtzeitpegelColors": {
         "H": "amber",
         "h": "amber",
@@ -88,6 +94,17 @@ def load_state() -> dict:
         state["wordClockStyle"] = DEFAULT_STATE["wordClockStyle"]
     if state.get("wordClockFont") not in WORD_CLOCK_FONTS:
         state["wordClockFont"] = DEFAULT_STATE["wordClockFont"]
+    if state.get("eventClockLanguage") not in WORD_CLOCK_LANGUAGES:
+        state["eventClockLanguage"] = DEFAULT_STATE["eventClockLanguage"]
+    if state.get("eventClockFont") not in WORD_CLOCK_FONTS:
+        state["eventClockFont"] = DEFAULT_STATE["eventClockFont"]
+    if state.get("eventClockType") not in EVENT_CLOCK_TYPES:
+        state["eventClockType"] = DEFAULT_STATE["eventClockType"]
+    try:
+        event_count = int(state.get("eventClockCount", DEFAULT_STATE["eventClockCount"]))
+    except (TypeError, ValueError):
+        event_count = DEFAULT_STATE["eventClockCount"]
+    state["eventClockCount"] = event_count if event_count in EVENT_CLOCK_COUNTS else DEFAULT_STATE["eventClockCount"]
     colors = state.get("lichtzeitpegelColors")
     normalized_colors = DEFAULT_STATE["lichtzeitpegelColors"].copy()
     if isinstance(colors, dict):
@@ -227,6 +244,8 @@ def api_state():
         "wordClockLanguages": WORD_CLOCK_LANGUAGES,
         "wordClockStyles": WORD_CLOCK_STYLES,
         "wordClockFonts": WORD_CLOCK_FONTS,
+        "eventClockTypes": EVENT_CLOCK_TYPES,
+        "eventClockCounts": EVENT_CLOCK_COUNTS,
         "maxAirportDestinations": MAX_AIRPORT_DESTINATIONS,
         "airportRotateSecondsRange": {
             "min": MIN_AIRPORT_ROTATE_SECONDS,
@@ -290,6 +309,33 @@ def update_state():
         if word_clock_font not in WORD_CLOCK_FONTS:
             return jsonify({"error": "Unsupported word clock font"}), 400
         state["wordClockFont"] = word_clock_font
+
+    if "eventClockLanguage" in payload:
+        event_clock_language = str(payload["eventClockLanguage"])
+        if event_clock_language not in WORD_CLOCK_LANGUAGES:
+            return jsonify({"error": "Unsupported event clock language"}), 400
+        state["eventClockLanguage"] = event_clock_language
+
+    if "eventClockFont" in payload:
+        event_clock_font = str(payload["eventClockFont"])
+        if event_clock_font not in WORD_CLOCK_FONTS:
+            return jsonify({"error": "Unsupported event clock font"}), 400
+        state["eventClockFont"] = event_clock_font
+
+    if "eventClockType" in payload:
+        event_clock_type = str(payload["eventClockType"])
+        if event_clock_type not in EVENT_CLOCK_TYPES:
+            return jsonify({"error": "Unsupported event clock type"}), 400
+        state["eventClockType"] = event_clock_type
+
+    if "eventClockCount" in payload:
+        try:
+            event_clock_count = int(payload["eventClockCount"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "eventClockCount must be an integer"}), 400
+        if event_clock_count not in EVENT_CLOCK_COUNTS:
+            return jsonify({"error": "Unsupported event clock count"}), 400
+        state["eventClockCount"] = event_clock_count
 
     if "lichtzeitpegelColors" in payload:
         incoming_colors = payload["lichtzeitpegelColors"]

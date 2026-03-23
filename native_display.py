@@ -30,6 +30,10 @@ DEFAULT_STATE = {
     "wordClockLanguage": "english",
     "wordClockStyle": "direct",
     "wordClockFont": "classic-sans",
+    "eventClockLanguage": "english",
+    "eventClockFont": "classic-sans",
+    "eventClockType": "events",
+    "eventClockCount": 3,
     "lichtzeitpegelColors": {
         "H": "amber",
         "h": "amber",
@@ -71,6 +75,19 @@ WORD_CLOCK_BUNDLED_FONTS = {
     "chinese": FONTS_DIR / "NotoSansSC-Regular.otf",
     "default": FONTS_DIR / "NotoSans-Regular.ttf",
 }
+EVENT_CLOCK_REFRESH_SECONDS = 3600
+WIKIPEDIA_LANGUAGE_CODES = {
+    "english": "en",
+    "german": "de",
+    "french": "fr",
+    "spanish": "es",
+    "czech": "cs",
+    "russian": "ru",
+    "portuguese": "pt",
+    "japanese": "ja",
+    "arabic": "ar",
+    "chinese": "zh",
+}
 
 
 @dataclass
@@ -106,6 +123,8 @@ class MediaPlayer:
 class WeatherSnapshot:
     temperature: int | None
     summary: str
+
+
 
 
 def load_json(path: Path, fallback):
@@ -232,6 +251,49 @@ def refresh_weather_cache(
     except Exception:
         return cache, last_fetch_monotonic, last_units
     return updated, now_monotonic, airport_units
+
+
+def wikipedia_language_code(language: str) -> str:
+    return WIKIPEDIA_LANGUAGE_CODES.get(language, "en")
+
+
+def fetch_on_this_day_events(language: str, event_type: str, now: datetime, count: int) -> list[dict]:
+    lang_code = wikipedia_language_code(language)
+    url = f"https://{lang_code}.wikipedia.org/api/rest_v1/feed/onthisday/{event_type}/{now.month}/{now.day}"
+    request = urllib.request.Request(url, headers={"User-Agent": "ClockDisplay/1.0"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    items = payload.get(event_type, [])
+    start_index = int(now.timestamp() // EVENT_CLOCK_REFRESH_SECONDS) * count
+    if items:
+        start_index %= len(items)
+    ordered_items = items[start_index:] + items[:start_index]
+    results = []
+    for item in ordered_items[:count]:
+        if not isinstance(item, dict):
+            continue
+        results.append({
+            "year": item.get("year"),
+            "text": str(item.get("text") or "").strip(),
+        })
+    return results
+
+
+def refresh_event_cache(state: dict, cache: dict, now: datetime) -> dict:
+    if state.get("displayMode") != "event-clock":
+        return cache
+    language = state.get("eventClockLanguage", "english")
+    event_type = state.get("eventClockType", "events")
+    count = int(state.get("eventClockCount", 3))
+    hour_bucket = int(now.timestamp() // EVENT_CLOCK_REFRESH_SECONDS)
+    cache_key = f"{language}:{event_type}:{now.year}-{now.month}-{now.day}:{count}:{hour_bucket}"
+    if cache.get("key") == cache_key and cache.get("items") is not None:
+        return cache
+    try:
+        items = fetch_on_this_day_events(language, event_type, now, count)
+    except Exception:
+        return cache if cache.get("items") is not None else {"key": cache_key, "items": []}
+    return {"key": cache_key, "items": items}
 
 
 def resolve_asset(path_value: str | None) -> Path | None:
@@ -990,6 +1052,84 @@ def draw_word_clock(surface: pygame.Surface, now: datetime, state: dict) -> None
     render_fitted_line(surface, line2, font_style, language, text_color, (center_x, line2_center_y), int(frame.width * 0.96), line_height)
 
 
+def wrap_text_lines(text: str, font: pygame.font.Font, max_width: int) -> list[str]:
+    words = text.split()
+    if not words:
+        return [""]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        trial = f"{current} {word}"
+        if font.size(trial)[0] <= max_width:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def draw_event_clock(surface: pygame.Surface, now: datetime, state: dict, event_cache: dict) -> None:
+    width, height = surface.get_size()
+    surface.fill((12, 11, 8))
+
+    left_panel = pygame.Rect(int(width * 0.04), int(height * 0.05), int(width * 0.24), int(height * 0.90))
+    right_panel = pygame.Rect(int(width * 0.32), int(height * 0.05), int(width * 0.64), int(height * 0.90))
+    pygame.draw.rect(surface, (24, 21, 16), left_panel, border_radius=20)
+    pygame.draw.rect(surface, (24, 21, 16), right_panel, border_radius=20)
+    pygame.draw.rect(surface, (116, 96, 66), left_panel, 2, border_radius=20)
+    pygame.draw.rect(surface, (116, 96, 66), right_panel, 2, border_radius=20)
+
+    date_font = word_clock_font(max(34, height // 10), state.get("eventClockFont", "classic-sans"), "english")
+    date_color = (245, 240, 228)
+    date_values = [
+        now.strftime("%d"),
+        now.strftime("%b").upper(),
+        now.strftime("%H"),
+        now.strftime("%M"),
+    ]
+    section_height = left_panel.height // len(date_values)
+    for index, value in enumerate(date_values):
+        center = (left_panel.centerx, left_panel.y + section_height * index + section_height // 2)
+        rendered = date_font.render(value, True, date_color)
+        scale_size = max(28, min(section_height - 12, left_panel.width - 24))
+        temp_font = word_clock_font(scale_size, state.get("eventClockFont", "classic-sans"), "english")
+        rendered = temp_font.render(value, True, date_color)
+        while (rendered.get_width() > left_panel.width - 24 or rendered.get_height() > section_height - 12) and scale_size > 22:
+            scale_size -= 4
+            temp_font = word_clock_font(scale_size, state.get("eventClockFont", "classic-sans"), "english")
+            rendered = temp_font.render(value, True, date_color)
+        surface.blit(rendered, rendered.get_rect(center=center))
+
+    language = state.get("eventClockLanguage", "english")
+    font_style = state.get("eventClockFont", "classic-sans")
+    title_font = word_clock_font(max(20, width // 34), font_style, language)
+    title = title_font.render("ON THIS DAY", True, (214, 196, 164))
+    surface.blit(title, (right_panel.x + 20, right_panel.y + 18))
+
+    event_font = word_clock_font(max(20, width // 52), font_style, language)
+    small_font = word_clock_font(max(18, width // 60), "classic-sans", language)
+    y = right_panel.y + 64
+    items = event_cache.get("items") or []
+    if not items:
+        empty = event_font.render("NO EVENT DATA", True, (245, 240, 228))
+        surface.blit(empty, (right_panel.x + 20, y))
+        return
+
+    for item in items:
+        year_text = small_font.render(str(item.get("year") or ""), True, (214, 196, 164))
+        surface.blit(year_text, (right_panel.x + 20, y))
+        y += year_text.get_height() + 6
+        lines = wrap_text_lines(item.get("text", ""), event_font, right_panel.width - 40)
+        for line in lines[:4]:
+            rendered = event_font.render(line, True, (245, 240, 228))
+            surface.blit(rendered, (right_panel.x + 20, y))
+            y += rendered.get_height() + 4
+        y += 18
+        if y > right_panel.bottom - 80:
+            break
+
+
 def main() -> int:
     pygame.init()
     pygame.font.init()
@@ -1007,6 +1147,7 @@ def main() -> int:
     weather_cache: dict[str, WeatherSnapshot] = {}
     last_weather_fetch = 0.0
     last_weather_units = state.get("airportUnits", "imperial")
+    event_cache: dict = {"key": None, "items": []}
 
     state_signature = json.dumps(state, sort_keys=True)
     next_state_poll = 0
@@ -1029,6 +1170,8 @@ def main() -> int:
             now_ms / 1000,
             last_weather_units,
         )
+        now = datetime.now()
+        event_cache = refresh_event_cache(state, event_cache, now)
         if now_ms >= next_state_poll:
             next_state_poll = now_ms + STATE_POLL_MS
             latest_state = load_state()
@@ -1045,13 +1188,13 @@ def main() -> int:
                 weather_cache = {}
                 last_weather_fetch = 0.0
                 last_weather_units = state.get("airportUnits", "imperial")
+                event_cache = {"key": None, "items": []}
                 last_second = -1
                 needs_render = True
 
         if state.get("displayMode") == "graphic" and media.update(now_ms):
             needs_render = True
 
-        now = datetime.now()
         if now.second != last_second:
             last_second = now.second
             needs_render = True
@@ -1069,6 +1212,8 @@ def main() -> int:
                 draw_lichtzeitpegel(work_surface, now, state)
             elif mode == "word-clock":
                 draw_word_clock(work_surface, now, state)
+            elif mode == "event-clock":
+                draw_event_clock(work_surface, now, state, event_cache)
 
             screen.fill((0, 0, 0))
             if rotation_angle:
