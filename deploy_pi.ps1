@@ -4,19 +4,25 @@ param(
   [string]$RemoteDir = "~/Clock"
 )
 
-scp -r `
-  assets `
-  uploads `
-  app.js `
-  cities.json `
-  clock_state.json `
-  index.html `
-  manage.html `
-  manage.js `
-  native_display.py `
-  README-pi.md `
-  requirements.txt `
-  server.py `
-  start-clock-browser.sh `
-  clock-web.service `
-  "${UserName}@${HostName}:${RemoteDir}"
+$ErrorActionPreference = "Stop"
+
+$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$remote = "${UserName}@${HostName}"
+$excludeArgs = @(
+  "--exclude=.git",
+  "--exclude=__pycache__",
+  "--exclude=.venv",
+  "--exclude=venv",
+  "--exclude=*.pyc",
+  "--exclude=.DS_Store",
+  "--exclude=Thumbs.db"
+)
+
+Push-Location $repoRoot
+try {
+  ssh $remote "mkdir -p $RemoteDir"
+  tar -czf - @excludeArgs . | ssh $remote "tar -xzf - -C $RemoteDir"
+}
+finally {
+  Pop-Location
+}
