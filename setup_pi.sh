@@ -20,5 +20,5 @@ if [[ -f clock.service ]]; then
 fi
 
 echo "Setup complete."
-echo "Run manually with: cd $PROJECT_DIR && python3 pi_clock.py"
+echo "Run manually with: cd $PROJECT_DIR && python3 native_display.py"
 echo "Service status: sudo systemctl status $SERVICE_NAME"

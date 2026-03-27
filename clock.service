@@ -6,7 +6,7 @@ After=graphical.target
 User=pi
 WorkingDirectory=/home/pi/Clock
 Environment=DISPLAY=:0
-ExecStart=/usr/bin/python3 /home/pi/Clock/pi_clock.py
+ExecStart=/usr/bin/python3 /home/pi/Clock/native_display.py
 Restart=always
 
 [Install]
