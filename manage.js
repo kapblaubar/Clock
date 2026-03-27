@@ -16,6 +16,7 @@ const applyHomeLocation = document.getElementById("applyHomeLocation");
 const clearHomeLocation = document.getElementById("clearHomeLocation");
 const homeLocationStatus = document.getElementById("homeLocationStatus");
 const customLabel = document.getElementById("customLabel");
+const customStreet = document.getElementById("customStreet");
 const customCity = document.getElementById("customCity");
 const customCountry = document.getElementById("customCountry");
 const customTimezone = document.getElementById("customTimezone");
@@ -92,7 +93,7 @@ function cityOptionById(cityId) {
 }
 
 function populateDisplayMode() {
-  const modes = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock", "event-clock"];
+  const modes = ["graphic", "simple", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock", "event-clock"];
   displayMode.innerHTML = "";
   modes.forEach((mode) => displayMode.appendChild(createOption(mode, mode)));
   displayMode.value = currentState.displayMode;
@@ -242,7 +243,7 @@ function updateModePanels() {
   const mode = displayMode.value;
   graphicPanel.hidden = mode !== "graphic";
   worldPanel.hidden = mode !== "world-daylight";
-  airportPanel.hidden = mode !== "airport-board";
+  airportPanel.hidden = mode !== "airport-board" && mode !== "simple";
   lichtzeitpegelPanel.hidden = mode !== "lichtzeitpegel";
   wordClockPanel.hidden = mode !== "word-clock";
   eventClockPanel.hidden = mode !== "event-clock";
@@ -254,7 +255,8 @@ function updateHomeLocationStatus() {
     return;
   }
   const home = currentState.homeLocation;
-  homeLocationStatus.textContent = `Home: ${home.label} · ${home.city}, ${home.country} (${home.lat.toFixed(3)}, ${home.lon.toFixed(3)})`;
+  const address = [home.street, home.city, home.country].filter(Boolean).join(", ");
+  homeLocationStatus.textContent = `Home: ${home.label} · ${address || home.city} (${home.lat.toFixed(3)}, ${home.lon.toFixed(3)})`;
 }
 
 function createButton(label, className, onClick) {
@@ -352,12 +354,12 @@ function renderCustomPlaces() {
   places.forEach((place) => {
     const card = document.createElement("article");
     card.className = "mini-card";
-    const title = document.createElement("div");
-    title.className = "mini-title";
-    title.textContent = `${place.label} · ${place.city}, ${place.country}`;
-    const pill = document.createElement("span");
-    pill.className = "pill";
-    pill.textContent = `${place.lat.toFixed(3)}, ${place.lon.toFixed(3)}`;
+  const title = document.createElement("div");
+  title.className = "mini-title";
+  title.textContent = `${place.label} · ${place.city}, ${place.country}`;
+  const pill = document.createElement("span");
+  pill.className = "pill";
+  pill.textContent = place.street ? `${place.street} · ${place.lat.toFixed(3)}, ${place.lon.toFixed(3)}` : `${place.lat.toFixed(3)}, ${place.lon.toFixed(3)}`;
     const actions = document.createElement("div");
     actions.className = "toolbar";
     actions.appendChild(createButton("Use as Home", "", () => setHomeLocationFromCustom(place.id)));
@@ -414,7 +416,14 @@ async function updateState(payload, successMessage) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  if (!response.ok) throw new Error("Could not update display state.");
+  if (!response.ok) {
+    let message = "Could not update display state.";
+    try {
+      const body = await response.json();
+      if (body?.error) message = body.error;
+    } catch {}
+    throw new Error(message);
+  }
   await fetchState();
   setStatus(successMessage);
 }
@@ -514,20 +523,30 @@ async function clearSelectedHomeLocation() {
 
 async function saveCustomPlaceEntry() {
   const label = customLabel.value.trim() || customCity.value.trim() || "Custom place";
+  const street = customStreet.value.trim();
   const city = customCity.value.trim();
   const country = customCountry.value.trim();
-  const timezone = customTimezone.value.trim() || "UTC";
-  const lat = Number(customLat.value);
-  const lon = Number(customLon.value);
+  const timezone = customTimezone.value.trim();
+  const lat = customLat.value.trim() ? Number(customLat.value) : null;
+  const lon = customLon.value.trim() ? Number(customLon.value) : null;
 
-  if (!city || !country || Number.isNaN(lat) || Number.isNaN(lon)) {
-    setStatus("Custom places require city, country, latitude, and longitude.");
+  if (!street && !city) {
+    setStatus("Enter at least a street address or city.");
+    return;
+  }
+  if ((lat === null) !== (lon === null)) {
+    setStatus("Provide both latitude and longitude, or leave both blank.");
+    return;
+  }
+  if ((lat !== null && Number.isNaN(lat)) || (lon !== null && Number.isNaN(lon))) {
+    setStatus("Latitude and longitude must be valid numbers.");
     return;
   }
 
   const updatedPlaces = [...(currentState.customPlaces || []), {
     id: `custom-${Date.now()}`,
     label,
+    street,
     city,
     country,
     timezone,
@@ -538,6 +557,7 @@ async function saveCustomPlaceEntry() {
   setStatus("Saving custom place...");
   await updateState({ customPlaces: updatedPlaces }, "Custom place saved.");
   customLabel.value = "";
+  customStreet.value = "";
   customCity.value = "";
   customCountry.value = "";
   customTimezone.value = "";

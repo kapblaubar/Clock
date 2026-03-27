@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import traceback
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -17,9 +18,11 @@ from PIL import Image, ImageSequence, UnidentifiedImageError
 
 BASE_DIR = Path(__file__).resolve().parent
 STATE_PATH = BASE_DIR / "clock_state.json"
+HOME_LOCATION_PATH = BASE_DIR / "home_location.json"
 CITIES_PATH = BASE_DIR / "cities.json"
 WORLD_MAP_PATH = BASE_DIR / "assets" / "tz-map-1518922800.png"
 FONTS_DIR = BASE_DIR / "assets" / "fonts"
+WEATHER_ICON_DIR = BASE_DIR / "assets" / "weather icons"
 DEFAULT_STATE = {
     "displayMode": "graphic",
     "defaultPhoto": "assets/bg1.webp",
@@ -88,6 +91,7 @@ WIKIPEDIA_LANGUAGE_CODES = {
     "arabic": "ar",
     "chinese": "zh",
 }
+WEATHER_ICON_CACHE: dict[tuple[str, int], pygame.Surface | None] = {}
 
 
 @dataclass
@@ -125,6 +129,19 @@ class WeatherSnapshot:
     summary: str
 
 
+@dataclass
+class ForecastHour:
+    time: datetime
+    temperature: int | None
+    summary: str
+    is_daylight: bool
+
+
+@dataclass
+class SimpleForecast:
+    hours: list[ForecastHour]
+
+
 
 
 def load_json(path: Path, fallback):
@@ -134,12 +151,20 @@ def load_json(path: Path, fallback):
         return fallback
 
 
+def load_persistent_home_location() -> dict | None:
+    payload = load_json(HOME_LOCATION_PATH, None)
+    return payload if isinstance(payload, dict) else None
+
+
 def load_state() -> dict:
     if not STATE_PATH.exists():
         STATE_PATH.write_text(json.dumps(DEFAULT_STATE, indent=2), encoding="utf-8")
         return DEFAULT_STATE.copy()
     state = DEFAULT_STATE.copy()
     state.update(load_json(STATE_PATH, {}))
+    persistent_home = load_persistent_home_location()
+    if persistent_home is not None:
+        state["homeLocation"] = persistent_home
     return state
 
 
@@ -177,6 +202,19 @@ def normalize_weather_payload(payload) -> list[dict]:
     return []
 
 
+def weather_home_location(state: dict) -> dict | None:
+    home = state.get("homeLocation") or None
+    if not home:
+        return None
+    return {
+        "id": HOME_WEATHER_ID,
+        "city": home.get("city", "Home"),
+        "lat": home["lat"],
+        "lon": home["lon"],
+        "timezone": home.get("timezone", ""),
+    }
+
+
 def fetch_weather_for_cities(selected_cities: list[dict], airport_units: str) -> dict[str, WeatherSnapshot]:
     if not selected_cities:
         return {}
@@ -191,7 +229,7 @@ def fetch_weather_for_cities(selected_cities: list[dict], airport_units: str) ->
     url = f"{OPEN_METEO_URL}?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(url, headers={"User-Agent": "ClockDisplay/1.0"})
 
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with urllib.request.urlopen(request, timeout=5) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
     weather_by_city: dict[str, WeatherSnapshot] = {}
@@ -220,15 +258,9 @@ def selected_destination_cities(state: dict, cities: dict[str, dict]) -> list[di
         city = cities.get(destination_id)
         if city:
             selected.append(city)
-    home = state.get("homeLocation") or None
-    if home:
-        selected.append({
-            "id": HOME_WEATHER_ID,
-            "city": home.get("city", "Home"),
-            "lat": home["lat"],
-            "lon": home["lon"],
-            "timezone": home.get("timezone", ""),
-        })
+    home_city = weather_home_location(state)
+    if home_city:
+        selected.append(home_city)
     return selected
 
 
@@ -240,7 +272,7 @@ def refresh_weather_cache(
     now_monotonic: float,
     last_units: str,
 ) -> tuple[dict[str, WeatherSnapshot], float, str]:
-    if state.get("displayMode") != "airport-board":
+    if state.get("displayMode") not in {"airport-board", "simple"}:
         return cache, last_fetch_monotonic, last_units
     airport_units = state.get("airportUnits", "imperial")
     if cache and airport_units == last_units and now_monotonic - last_fetch_monotonic < WEATHER_REFRESH_SECONDS:
@@ -249,8 +281,128 @@ def refresh_weather_cache(
     try:
         updated = fetch_weather_for_cities(selected_destination_cities(state, cities), airport_units)
     except Exception:
-        return cache, last_fetch_monotonic, last_units
+        return cache, now_monotonic, last_units
     return updated, now_monotonic, airport_units
+
+
+def load_weather_icon(name: str, size: int) -> pygame.Surface | None:
+    cache_key = (name, size)
+    if cache_key in WEATHER_ICON_CACHE:
+        return WEATHER_ICON_CACHE[cache_key]
+    path = WEATHER_ICON_DIR / name
+    if not path.exists():
+        WEATHER_ICON_CACHE[cache_key] = None
+        return None
+    try:
+        with Image.open(path) as image:
+            rgba = image.convert("RGBA")
+            surface = pygame.image.fromstring(rgba.tobytes(), rgba.size, rgba.mode).convert_alpha()
+    except (UnidentifiedImageError, OSError):
+        WEATHER_ICON_CACHE[cache_key] = None
+        return None
+    width, height = surface.get_size()
+    if width <= 0 or height <= 0:
+        WEATHER_ICON_CACHE[cache_key] = None
+        return None
+    scale = min(size / width, size / height)
+    scaled_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    WEATHER_ICON_CACHE[cache_key] = pygame.transform.smoothscale(surface, scaled_size)
+    return WEATHER_ICON_CACHE[cache_key]
+
+
+def simple_icon_name(summary: str, is_daylight: bool) -> str:
+    normalized = summary.lower()
+    if normalized in {"rainy", "drizzle"}:
+        return "Rainy.png"
+    if normalized == "storm":
+        return "Stormy.png"
+    if normalized == "snow":
+        return "Snow.png"
+    if normalized == "cloudy":
+        return "Cloudy.png" if is_daylight else "MoonCloud.png"
+    return "Sunny.png" if is_daylight else "Moony.png"
+
+
+def parse_open_meteo_time(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def fetch_simple_forecast(home: dict) -> SimpleForecast:
+    params = {
+        "latitude": str(home["lat"]),
+        "longitude": str(home["lon"]),
+        "hourly": "temperature_2m,weather_code",
+        "daily": "sunrise,sunset",
+        "forecast_days": 2,
+        "temperature_unit": "celsius",
+        "timezone": home.get("timezone") or "auto",
+    }
+    url = f"{OPEN_METEO_URL}?{urllib.parse.urlencode(params)}"
+    request = urllib.request.Request(url, headers={"User-Agent": "ClockDisplay/1.0"})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    hourly = payload.get("hourly", {}) if isinstance(payload, dict) else {}
+    daily = payload.get("daily", {}) if isinstance(payload, dict) else {}
+    times = hourly.get("time") or []
+    temperatures = hourly.get("temperature_2m") or []
+    weather_codes = hourly.get("weather_code") or []
+    sunrise_by_date: dict[str, datetime] = {}
+    sunset_by_date: dict[str, datetime] = {}
+    for raw_date, raw_sunrise, raw_sunset in zip(daily.get("time") or [], daily.get("sunrise") or [], daily.get("sunset") or [], strict=False):
+        sunrise_time = parse_open_meteo_time(str(raw_sunrise))
+        sunset_time = parse_open_meteo_time(str(raw_sunset))
+        if sunrise_time is not None:
+            sunrise_by_date[str(raw_date)] = sunrise_time
+        if sunset_time is not None:
+            sunset_by_date[str(raw_date)] = sunset_time
+    entries: list[ForecastHour] = []
+
+    for raw_time, raw_temp, raw_code in zip(times, temperatures, weather_codes, strict=False):
+        forecast_time = parse_open_meteo_time(str(raw_time))
+        if forecast_time is None:
+            continue
+        try:
+            temperature = int(round(float(raw_temp)))
+        except (TypeError, ValueError):
+            temperature = None
+        try:
+            weather_code = int(raw_code)
+        except (TypeError, ValueError):
+            weather_code = None
+        date_key = forecast_time.date().isoformat()
+        sunrise_time = sunrise_by_date.get(date_key)
+        sunset_time = sunset_by_date.get(date_key)
+        is_daylight = bool(sunrise_time and sunset_time and sunrise_time <= forecast_time < sunset_time)
+        entries.append(ForecastHour(
+            time=forecast_time,
+            temperature=temperature,
+            summary=weather_summary_from_code(weather_code),
+            is_daylight=is_daylight,
+        ))
+    return SimpleForecast(hours=entries)
+
+
+def refresh_simple_forecast_cache(
+    state: dict,
+    cache: SimpleForecast | None,
+    last_fetch_monotonic: float,
+    now_monotonic: float,
+) -> tuple[SimpleForecast | None, float]:
+    if state.get("displayMode") != "simple":
+        return cache, last_fetch_monotonic
+    home = weather_home_location(state)
+    if not home:
+        return None, last_fetch_monotonic
+    if cache is not None and now_monotonic - last_fetch_monotonic < WEATHER_REFRESH_SECONDS:
+        return cache, last_fetch_monotonic
+    try:
+        return fetch_simple_forecast(home), now_monotonic
+    except Exception:
+        return cache, now_monotonic
 
 
 def wikipedia_language_code(language: str) -> str:
@@ -431,6 +583,100 @@ def draw_graphic_mode(surface: pygame.Surface, state: dict, media: MediaPlayer, 
     text_rect = text.get_rect(center=(logical_size[0] // 2, int(logical_size[1] * 0.9)))
     surface.blit(shadow, text_rect.move(3, 3))
     surface.blit(text, text_rect)
+
+
+def next_forecast_hours(forecast: SimpleForecast | None, now: datetime) -> list[ForecastHour]:
+    if forecast is None:
+        return []
+    next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    selected = [entry for entry in forecast.hours if entry.time >= next_hour]
+    return selected[:8]
+
+
+def draw_simple_clock(surface: pygame.Surface, now: datetime, state: dict, forecast: SimpleForecast | None) -> None:
+    width, height = surface.get_size()
+    surface.fill((0, 0, 0))
+
+    home = state.get("homeLocation") or None
+    display_now = now
+    if home and home.get("timezone"):
+        try:
+            # Keep local comparison values naive because Open-Meteo local-time
+            # forecast timestamps are parsed without timezone offsets.
+            display_now = datetime.now(ZoneInfo(home["timezone"])).replace(tzinfo=None)
+        except Exception:
+            display_now = now
+
+    time_font = pygame.font.SysFont("Arial", max(210, int(width * 0.30)), bold=False)
+    header_font = pygame.font.SysFont("Arial", max(20, width // 42), bold=True)
+    strip_time_font = pygame.font.SysFont("Arial", max(18, width // 56), bold=True)
+    strip_temp_font = pygame.font.SysFont("Arial", max(24, width // 40), bold=True)
+
+    time_text = display_now.strftime("%H:%M")
+    rendered_time = time_font.render(time_text, True, (255, 255, 255))
+    time_rect = rendered_time.get_rect(center=(width // 2, int(height * 0.36)))
+    surface.blit(rendered_time, time_rect)
+
+    forecast_band = pygame.Rect(int(width * 0.03), int(height * 0.78), int(width * 0.94), int(height * 0.18))
+    pygame.draw.line(surface, (54, 54, 54), (forecast_band.left, forecast_band.top), (forecast_band.right, forecast_band.top), 2)
+
+    if not home:
+        message = header_font.render("Set Home Location to enable Simple forecast.", True, (210, 210, 210))
+        surface.blit(message, message.get_rect(center=forecast_band.center))
+        return
+
+    upcoming = next_forecast_hours(forecast, display_now)
+    if not upcoming:
+        message = header_font.render("Forecast unavailable.", True, (210, 210, 210))
+        surface.blit(message, message.get_rect(center=forecast_band.center))
+        return
+
+    home_label = header_font.render(home.get("city", "Home").upper(), True, (180, 180, 180))
+    surface.blit(home_label, (forecast_band.left, forecast_band.top - home_label.get_height() - 10))
+
+    column_width = forecast_band.width / len(upcoming)
+    icon_size = max(22, min(52, int(forecast_band.height * 0.34)))
+    for index, entry in enumerate(upcoming):
+        column_x = forecast_band.left + index * column_width
+        column_rect = pygame.Rect(int(column_x), forecast_band.top + 8, int(column_width), forecast_band.height - 12)
+        if index:
+            pygame.draw.line(surface, (38, 38, 38), (column_rect.left, column_rect.top + 6), (column_rect.left, column_rect.bottom - 6), 1)
+
+        time_label = strip_time_font.render(entry.time.strftime("%H:%M"), True, (220, 220, 220))
+        surface.blit(time_label, time_label.get_rect(center=(column_rect.centerx, column_rect.top + 14)))
+
+        icon = load_weather_icon(simple_icon_name(entry.summary, entry.is_daylight), icon_size)
+        if icon is not None:
+            icon_rect = icon.get_rect(center=(column_rect.centerx, column_rect.centery - 4))
+            surface.blit(icon, icon_rect)
+
+        temp_value = "--" if entry.temperature is None else f"{entry.temperature}C"
+        temp_label = strip_temp_font.render(temp_value, True, (255, 255, 255))
+        surface.blit(temp_label, temp_label.get_rect(center=(column_rect.centerx, column_rect.bottom - 24)))
+
+
+
+def draw_simple_clock_fallback(surface: pygame.Surface, now: datetime, state: dict, message: str) -> None:
+    width, height = surface.get_size()
+    surface.fill((0, 0, 0))
+    home = state.get("homeLocation") or None
+    display_now = now
+    if home and home.get("timezone"):
+        try:
+            display_now = datetime.now(ZoneInfo(home["timezone"])).replace(tzinfo=None)
+        except Exception:
+            display_now = now
+
+    time_font = pygame.font.SysFont("Arial", max(210, int(width * 0.30)), bold=False)
+    info_font = pygame.font.SysFont("Arial", max(20, width // 42), bold=True)
+    time_text = display_now.strftime("%H:%M")
+    rendered_time = time_font.render(time_text, True, (255, 255, 255))
+    time_rect = rendered_time.get_rect(center=(width // 2, int(height * 0.40)))
+    surface.blit(rendered_time, time_rect)
+
+    info_text = info_font.render(message, True, (210, 210, 210))
+    info_rect = info_text.get_rect(center=(width // 2, int(height * 0.84)))
+    surface.blit(info_text, info_rect)
 
 
 def solar_position(now_utc: datetime) -> tuple[float, float]:
@@ -1147,6 +1393,8 @@ def main() -> int:
     weather_cache: dict[str, WeatherSnapshot] = {}
     last_weather_fetch = 0.0
     last_weather_units = state.get("airportUnits", "imperial")
+    simple_forecast_cache: SimpleForecast | None = None
+    last_simple_forecast_fetch = 0.0
     event_cache: dict = {"key": None, "items": []}
 
     state_signature = json.dumps(state, sort_keys=True)
@@ -1170,6 +1418,12 @@ def main() -> int:
             now_ms / 1000,
             last_weather_units,
         )
+        simple_forecast_cache, last_simple_forecast_fetch = refresh_simple_forecast_cache(
+            state,
+            simple_forecast_cache,
+            last_simple_forecast_fetch,
+            now_ms / 1000,
+        )
         now = datetime.now()
         event_cache = refresh_event_cache(state, event_cache, now)
         if now_ms >= next_state_poll:
@@ -1188,6 +1442,8 @@ def main() -> int:
                 weather_cache = {}
                 last_weather_fetch = 0.0
                 last_weather_units = state.get("airportUnits", "imperial")
+                simple_forecast_cache = None
+                last_simple_forecast_fetch = 0.0
                 event_cache = {"key": None, "items": []}
                 last_second = -1
                 needs_render = True
@@ -1204,6 +1460,12 @@ def main() -> int:
             mode = state.get("displayMode", "graphic")
             if mode == "graphic":
                 draw_graphic_mode(work_surface, state, media, now, graphic_font)
+            elif mode == "simple":
+                try:
+                    draw_simple_clock(work_surface, now, state, simple_forecast_cache)
+                except Exception:
+                    traceback.print_exc()
+                    draw_simple_clock_fallback(work_surface, now, state, "Simple mode error. Using time-only fallback.")
             elif mode == "world-daylight":
                 draw_world_daylight(work_surface, now, world_map_cache)
             elif mode == "airport-board":

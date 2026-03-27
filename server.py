@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import math
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,12 +15,13 @@ BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR / "assets"
 UPLOADS_DIR = BASE_DIR / "uploads"
 STATE_PATH = BASE_DIR / "clock_state.json"
+HOME_LOCATION_PATH = BASE_DIR / "home_location.json"
 CITIES_PATH = BASE_DIR / "cities.json"
 INDEX_PATH = BASE_DIR / "index.html"
 MANAGE_PATH = BASE_DIR / "manage.html"
 
 ALLOWED_EXTENSIONS = {".gif", ".webp", ".png", ".jpg", ".jpeg", ".avif"}
-DISPLAY_MODES = ["graphic", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock", "event-clock"]
+DISPLAY_MODES = ["graphic", "simple", "world-daylight", "airport-board", "lichtzeitpegel", "word-clock", "event-clock"]
 ROTATION_MODES = ["landscape", "portrait", "landscape-flipped", "portrait-flipped"]
 AIRPORT_UNIT_MODES = ["imperial", "metric"]
 LICHTZEITPEGEL_COLOR_MODES = ["amber", "red", "green", "blue", "purple", "white"]
@@ -29,6 +33,7 @@ EVENT_CLOCK_COUNTS = [1, 2, 3, 4]
 MAX_AIRPORT_DESTINATIONS = 12
 MIN_AIRPORT_ROTATE_SECONDS = 15
 MAX_AIRPORT_ROTATE_SECONDS = 3600
+NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 DEFAULT_STATE = {
     "displayMode": "graphic",
     "defaultPhoto": "assets/bg1.webp",
@@ -58,6 +63,7 @@ DEFAULT_STATE = {
 }
 
 app = Flask(__name__)
+GEOCODE_CACHE: dict[str, dict | None] = {}
 
 
 def ensure_state() -> None:
@@ -72,6 +78,163 @@ def load_cities() -> list[dict]:
 
 def city_exists(city_id: str) -> bool:
     return any(city["id"] == city_id for city in load_cities())
+
+
+def normalized_text(value) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def normalized_address_key(location: dict) -> str:
+    return "|".join([
+        normalized_text(location.get("street")),
+        normalized_text(location.get("city")),
+        normalized_text(location.get("country")),
+    ])
+
+
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius_miles = 3958.8
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return 2 * radius_miles * math.asin(math.sqrt(a))
+
+
+def find_city_match(city_name: str, country_name: str = "") -> dict | None:
+    city_key = normalized_text(city_name)
+    country_key = normalized_text(country_name)
+    if not city_key:
+        return None
+
+    cities = load_cities()
+    exact = [city for city in cities if normalized_text(city.get("city")) == city_key]
+    if country_key:
+        country_exact = [city for city in exact if normalized_text(city.get("country")) == country_key]
+        if country_exact:
+            return country_exact[0]
+    if len(exact) == 1:
+        return exact[0]
+    return None
+
+
+def nearest_city_for_coords(lat: float, lon: float) -> dict | None:
+    cities = load_cities()
+    if not cities:
+        return None
+    return min(cities, key=lambda city: haversine_miles(lat, lon, city["lat"], city["lon"]))
+
+
+def geocode_location(location: dict) -> dict | None:
+    cache_key = normalized_address_key(location)
+    if not cache_key.strip("|"):
+        return None
+    if cache_key in GEOCODE_CACHE:
+        return GEOCODE_CACHE[cache_key]
+
+    street = str(location.get("street") or "").strip()
+    city = str(location.get("city") or "").strip()
+    country = str(location.get("country") or "").strip()
+    query = ", ".join(part for part in [street, city, country] if part)
+    if not query:
+        return None
+
+    params = {
+        "q": query,
+        "format": "jsonv2",
+        "limit": 1,
+        "addressdetails": 1,
+    }
+    request = urllib.request.Request(
+        f"{NOMINATIM_SEARCH_URL}?{urllib.parse.urlencode(params)}",
+        headers={"User-Agent": "ClockDisplay/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        GEOCODE_CACHE[cache_key] = None
+        return None
+
+    if not isinstance(payload, list) or not payload:
+        GEOCODE_CACHE[cache_key] = None
+        return None
+
+    entry = payload[0]
+    address = entry.get("address", {}) if isinstance(entry, dict) else {}
+    try:
+        result = {
+            "street": street,
+            "city": city or str(address.get("city") or address.get("town") or address.get("village") or "").strip(),
+            "country": country or str(address.get("country") or "").strip(),
+            "lat": float(entry["lat"]),
+            "lon": float(entry["lon"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        GEOCODE_CACHE[cache_key] = None
+        return None
+
+    GEOCODE_CACHE[cache_key] = result
+    return result
+
+
+def resolve_location_fields(location: dict) -> dict | None:
+    label = str(location.get("label") or "Home").strip() or "Home"
+    street_name = str(location.get("street") or "").strip()
+    city_name = str(location.get("city") or "").strip()
+    country_name = str(location.get("country") or "").strip()
+    timezone_name = str(location.get("timezone") or "").strip()
+    lat_value = location.get("lat")
+    lon_value = location.get("lon")
+
+    matched_city = find_city_match(city_name, country_name) if city_name else None
+    if matched_city is None and label and not city_name:
+        matched_city = find_city_match(label, country_name)
+
+    lat = None
+    lon = None
+    try:
+        if lat_value is not None and lon_value is not None:
+            lat = float(lat_value)
+            lon = float(lon_value)
+    except (TypeError, ValueError):
+        lat = None
+        lon = None
+
+    if (lat is None or lon is None) and (street_name or city_name):
+        geocoded = geocode_location(location)
+        if geocoded:
+            street_name = street_name or geocoded.get("street", "")
+            city_name = city_name or geocoded.get("city", "")
+            country_name = country_name or geocoded.get("country", "")
+            lat = geocoded["lat"]
+            lon = geocoded["lon"]
+
+    if matched_city:
+        city_name = city_name or matched_city["city"]
+        country_name = country_name or matched_city["country"]
+        timezone_name = timezone_name or matched_city["timezone"]
+        if lat is None or lon is None:
+            lat = float(matched_city["lat"])
+            lon = float(matched_city["lon"])
+
+    if (timezone_name == "" or country_name == "") and lat is not None and lon is not None:
+        nearest = nearest_city_for_coords(lat, lon)
+        if nearest:
+            country_name = country_name or nearest["country"]
+            timezone_name = timezone_name or nearest["timezone"]
+
+    if lat is None or lon is None:
+        return None
+
+    return {
+        "label": label,
+        "street": street_name,
+        "city": city_name or label,
+        "country": country_name,
+        "timezone": timezone_name,
+        "lat": lat,
+        "lon": lon,
+    }
 
 
 def load_state() -> dict:
@@ -123,11 +286,12 @@ def load_state() -> dict:
         if isinstance(destination, str) and city_exists(destination)
     ] or DEFAULT_STATE["airportDestinations"][:]
     state["customPlaces"] = [place for place in state.get("customPlaces") or [] if isinstance(place, dict)]
-    state["homeLocation"] = normalize_home_location(state.get("homeLocation"))
+    state["homeLocation"] = load_persistent_home_location() or normalize_home_location(state.get("homeLocation"))
     return state
 
 
 def save_state(state: dict) -> None:
+    save_persistent_home_location(state.get("homeLocation"))
     STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
@@ -173,32 +337,44 @@ def photo_exists(photo_path: str) -> bool:
 def normalize_home_location(value):
     if not isinstance(value, dict):
         return None
-    try:
-        return {
-            "label": str(value.get("label") or "Home").strip() or "Home",
-            "city": str(value.get("city") or "").strip(),
-            "country": str(value.get("country") or "").strip(),
-            "timezone": str(value.get("timezone") or "").strip(),
-            "lat": float(value["lat"]),
-            "lon": float(value["lon"]),
-        }
-    except (KeyError, TypeError, ValueError):
+    return resolve_location_fields(value)
+
+
+def load_persistent_home_location() -> dict | None:
+    if not HOME_LOCATION_PATH.exists():
         return None
+    try:
+        payload = json.loads(HOME_LOCATION_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return normalize_home_location(payload)
+
+
+def save_persistent_home_location(home_location: dict | None) -> None:
+    normalized = normalize_home_location(home_location)
+    if normalized is None:
+        if HOME_LOCATION_PATH.exists():
+            HOME_LOCATION_PATH.unlink()
+        return
+    HOME_LOCATION_PATH.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
 
 
 def normalize_custom_place(place: dict):
-    try:
-        return {
-            "id": str(place.get("id") or f"custom-{uuid4().hex[:8]}"),
-            "label": str(place.get("label") or "Custom place").strip(),
-            "city": str(place.get("city") or "").strip(),
-            "country": str(place.get("country") or "").strip(),
-            "timezone": str(place.get("timezone") or "UTC").strip() or "UTC",
-            "lat": float(place["lat"]),
-            "lon": float(place["lon"]),
-        }
-    except (KeyError, TypeError, ValueError):
+    if not isinstance(place, dict):
         return None
+    resolved = resolve_location_fields({
+        "label": place.get("label") or "Custom place",
+        "street": place.get("street") or "",
+        "city": place.get("city") or "",
+        "country": place.get("country") or "",
+        "timezone": place.get("timezone") or "",
+        "lat": place.get("lat"),
+        "lon": place.get("lon"),
+    })
+    if resolved is None:
+        return None
+    resolved["id"] = str(place.get("id") or f"custom-{uuid4().hex[:8]}")
+    return resolved
 
 
 @app.get("/")
@@ -369,7 +545,7 @@ def update_state():
         else:
             normalized_home = normalize_home_location(home)
             if normalized_home is None:
-                return jsonify({"error": "Invalid home location"}), 400
+                return jsonify({"error": "Could not resolve home location from the provided address or city."}), 400
             state["homeLocation"] = normalized_home
 
     if "customPlaces" in payload:
@@ -380,7 +556,7 @@ def update_state():
         for place in incoming_places:
             normalized_place = normalize_custom_place(place)
             if normalized_place is None:
-                return jsonify({"error": "Invalid custom place"}), 400
+                return jsonify({"error": "Could not resolve one of the custom places from the provided address or city."}), 400
             normalized_places.append(normalized_place)
         state["customPlaces"] = normalized_places
 

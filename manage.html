@@ -236,20 +236,23 @@
               <button id="applyHomeLocation" type="button">Use Selected Home</button>
               <button id="clearHomeLocation" type="button" class="secondary">Clear Home</button>
             </div>
+            <p class="field-note">This saved home location is used by both Simple and Airport Board modes and persists across reboots.</p>
             <p id="homeLocationStatus" class="field-note">No home location saved yet.</p>
           </div>
           <div class="stack">
             <h3>Add Custom Place</h3>
             <div class="field-row">
               <input id="customLabel" type="text" placeholder="Label e.g. Home" />
+              <input id="customStreet" type="text" placeholder="Street address e.g. 123 Main St" />
               <input id="customCity" type="text" placeholder="City e.g. Washougal" />
               <input id="customCountry" type="text" placeholder="Country e.g. USA" />
             </div>
             <div class="field-row">
-              <input id="customTimezone" type="text" placeholder="Timezone e.g. America/Los_Angeles" />
-              <input id="customLat" type="number" step="any" placeholder="Latitude" />
-              <input id="customLon" type="number" step="any" placeholder="Longitude" />
+              <input id="customTimezone" type="text" placeholder="Timezone override e.g. America/Los_Angeles" />
+              <input id="customLat" type="number" step="any" placeholder="Latitude override" />
+              <input id="customLon" type="number" step="any" placeholder="Longitude override" />
             </div>
+            <p class="field-note">Enter a street address or city/country and the portal will look it up for you. Latitude and longitude are optional overrides.</p>
             <div class="button-row">
               <button id="saveCustomPlace" type="button">Save Custom Place</button>
             </div>
